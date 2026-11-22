@@ -1,4 +1,4 @@
-"""Temizci — CachyOS/Arch için güvenli disk temizleyici."""
+"""Temizci — Arch tabanlı Linux için güvenli yerel bakım yardımcısı."""
 
 from .core import VERSION
 

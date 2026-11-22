@@ -33,7 +33,7 @@ kendiliğinden seçilmez.
 ## Kurulum
 
 Python 3.11+ ve yerel pencere arayüzü için PySide6 gerekir. PySide6 bu sistemde
-kurulu. Başka bir CachyOS/Arch kurulumunda `sudo pacman -S pyside6` ile kurabilirsin.
+kurulu. Başka bir Arch tabanlı kurulumda `sudo pacman -S pyside6` ile kurabilirsin.
 
 ```bash
 cd ~/Projects/temizci

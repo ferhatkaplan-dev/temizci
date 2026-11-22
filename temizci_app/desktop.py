@@ -493,7 +493,7 @@ class MainWindow(QMainWindow):
         brand_col = QVBoxLayout()
         brand = QLabel("Temizci")
         brand.setObjectName("brand")
-        self.subtitle = QLabel("CachyOS için güvenli disk temizliği")
+        self.subtitle = QLabel("Arch tabanlı Linux için güvenli bakım")
         self.subtitle.setObjectName("subtitle")
         brand_col.addWidget(brand)
         brand_col.addWidget(self.subtitle)

@@ -167,7 +167,7 @@ def cmd_gui(_args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="temizci",
-        description="CachyOS/Arch için güvenli disk temizleyici.",
+        description="Arch ve Arch tabanlı dağıtımlar için güvenli yerel bakım yardımcısı.",
     )
     parser.add_argument("--version", action="version", version=f"Temizci {core.VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
