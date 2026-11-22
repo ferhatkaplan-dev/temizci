@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest a user-centered improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem should this solve?
+      description: Describe the user and situation, not only a proposed implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety, privacy, and reversibility
+      description: Could the feature delete data, need elevated privileges, or expose personal information?

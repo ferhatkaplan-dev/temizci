@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Temizci
+GenericName=Disk Temizleyici
+Comment=Önbellekleri, eski yedekleri ve gereksiz dosyaları güvenle temizle
+Exec=temizci gui
+Icon=temizci
+Terminal=false
+Categories=System;Utility;Settings;
+Keywords=disk;temizlik;cache;cleaner;storage;
+StartupNotify=true

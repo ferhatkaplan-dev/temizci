@@ -1,0 +1,39 @@
+name: Bug report
+description: Report a reproducible problem safely
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search existing reports first. Never include passwords, tokens, or unredacted private logs.
+  - type: input
+    id: version
+    attributes:
+      label: Temizci version
+      placeholder: e.g. 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution and version
+      placeholder: e.g. Arch Linux, CachyOS
+    validations:
+      required: true
+  - type: input
+    id: desktop
+    attributes:
+      label: Desktop environment / session
+      placeholder: e.g. KDE Plasma on Wayland
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact steps and what you expected versus what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted support report (optional)
+      description: Generate with `temizci support-report`, inspect it, then paste or attach it.
