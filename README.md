@@ -1,8 +1,16 @@
-# Temizci
+# Temizci — Arch Linux Disk Temizleyici ve Sistem Bakımı
 
-CachyOS ve Arch tabanlı dağıtımlar için **güvenli**, **yerel** bakım yardımcısı.
-Önbellekleri, eski tarayıcı yedeklerini, geliştirici artıklarını ve büyük dosyaları
-bulur; neyin silineceğini önce gösterir, sonra onayınızla temizler.
+Arch Linux, CachyOS ve Arch tabanlı dağıtımlar için ücretsiz, açık kaynaklı bir
+**disk temizleyici ve sistem bakım uygulaması**. Uygulama/tarayıcı önbelleklerini,
+eski yedekleri, geliştirici artıklarını, büyük dosyaları ve Pacman paket
+adaylarını bulur. Gizlilik odaklı ve yerel çalışır: temizlenecek öğeleri önce
+gösterir, yalnızca açık onayınızdan sonra işlem yapar; dosyaları, paketleri veya
+sistem servislerini sessizce silmez/kapatmaz.
+
+[![Tests](https://github.com/ferhatkaplan-dev/temizci/actions/workflows/test.yml/badge.svg)](https://github.com/ferhatkaplan-dev/temizci/actions/workflows/test.yml)
+[![MIT License](https://img.shields.io/github/license/ferhatkaplan-dev/temizci)](LICENSE)
+
+**Arch Linux · CachyOS · Pacman · Linux disk temizliği · Python · PySide6**
 
 ```
 ┌──────────────────────────────────────────────────────────────┐

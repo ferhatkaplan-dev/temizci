@@ -1,9 +1,16 @@
-# Temizci
+# Temizci — Arch Linux Disk Cleaner & System Maintenance
 
-A local, safety-first maintenance assistant for Arch Linux and Arch-based
-distributions, including CachyOS. Temizci helps people understand disk usage,
-review package-removal candidates, and inspect startup/performance signals. It
-does not silently delete files, remove packages, or disable system services.
+A free, open-source **disk cleaner and system maintenance app for Arch Linux**
+and Arch-based distributions such as CachyOS. Temizci finds application and
+browser caches, old backups, developer leftovers, large files, and removable
+Pacman package candidates. It is privacy-first and local-only: review every
+proposed cleanup and explicitly confirm it. Temizci never silently deletes
+files, removes packages, or disables system services.
+
+[![Tests](https://github.com/ferhatkaplan-dev/temizci/actions/workflows/test.yml/badge.svg)](https://github.com/ferhatkaplan-dev/temizci/actions/workflows/test.yml)
+[![MIT License](https://img.shields.io/github/license/ferhatkaplan-dev/temizci)](LICENSE)
+
+**Arch Linux · CachyOS · Pacman · Linux disk cleanup · Python · PySide6**
 
 **[Türkçe README](README.md)**
 
@@ -22,11 +29,11 @@ does not silently delete files, remove packages, or disable system services.
 
 ## Install and run
 
-Requirements: Python 3.11+, PySide6 for the native GUI. On Arch:
+Requirements: Python 3.11+, PySide6 for the native GUI. On Arch Linux or CachyOS:
 
 ```bash
 sudo pacman -S python pyside6
-git clone <repository-url>
+git clone https://github.com/ferhatkaplan-dev/temizci.git
 cd temizci
 ./install.sh
 temizci gui
