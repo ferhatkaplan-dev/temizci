@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from temizci_app import core
+from temizci_app import i18n
 
 
 class TemizciSafetyTests(unittest.TestCase):
@@ -240,6 +241,21 @@ Required By     : None
         self.assertEqual(core.write_community_support_report(destination, report), destination)
         self.assertEqual(json.loads(destination.read_text(encoding="utf-8")), report)
         self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+
+    def test_english_and_turkish_runtime_translations(self) -> None:
+        original = i18n.get_language()
+        try:
+            i18n.set_language("en")
+            self.assertEqual(i18n.tr("Uygulamalar ve paketler"), "Apps & packages")
+            self.assertEqual(i18n.tr("3 öğe seçildi · 1.5 MB"), "3 items selected · 1.5 MB")
+            self.assertEqual(i18n.tr("85% dolu"), "85% used")
+            self.assertEqual(i18n.tr("3 seçili · 12 / 303 paket gösteriliyor"), "3 selected · showing 12 of 303 packages")
+            self.assertEqual(i18n.tr("Artık paketler (5 adet)"), "Orphan packages (5)")
+            i18n.set_language("tr")
+            self.assertEqual(i18n.tr("Apps & packages"), "Uygulamalar ve paketler")
+            self.assertEqual(i18n.tr("85% used"), "85% dolu")
+        finally:
+            i18n.set_language(original)
 
     def test_human_size(self) -> None:
         self.assertEqual(core.human_size(0), "0 B")

@@ -45,5 +45,6 @@ Keep changes focused, include tests and documentation, and state which commands
 you ran. UI changes should include a screenshot when practical. New dependencies
 need a clear justification and a supported-version note.
 
-Temizci currently uses Turkish UI copy. User-facing strings should remain clear
-and avoid untranslated technical jargon; English documentation is welcome.
+Temizci provides Turkish and English UI copy. Add translations to
+`temizci_app/i18n.py` for new user-facing strings, keep both languages clear,
+and avoid unexplained technical jargon.

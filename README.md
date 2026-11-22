@@ -61,6 +61,7 @@ GUI'deki iş akışları:
 * **Derin inceleme:** güvenli ve dikkat öğelerini seçer; açık uygulamaları ve riskli yedekleri atlar.
 * **Manuel:** otomatik seçim yapmaz. Risk filtresi, arama ve boyuta göre sıralama kullanılabilir.
 * **Ayarlar:** varsayılan çöp kutusu/kalıcı sil tercihi, büyük dosya eşiği, başlangıç taraması ve aralıkla tarama.
+* **Dil:** Ayarlar → Dil bölümünden Türkçe veya English seç; değişiklik uygulamaya anında yansır ve kaydedilir.
 * **Geçmiş / Çöp kutusu:** önceki işlemleri gösterir veya XDG çöp klasörünü açar.
 * **Uygulamalar ve paketler:** Pacman envanterini, kurulu boyutları ve bağımlılık ilişkilerini gösterir. Kaldırma öncesi Pacman'ın `-Rsp --print-format` salt okunur planı incelenir; sonrasında komut terminalde açılır ve Pacman'ın kendi onayı da gerekir.
 * **Hız ve başlangıç:** RAM/swap, yük, açılışta en uzun süren systemd birimleri, TRIM ve güç profilini ölçer. Kullanıcı autostart girdileri silinmeden devre dışı bırakılıp geri yüklenebilir.

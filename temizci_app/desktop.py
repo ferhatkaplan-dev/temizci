@@ -43,6 +43,13 @@ from PySide6.QtWidgets import (
 # widgets; no privileged operation is performed in a worker thread.
 from PySide6.QtWidgets import QAbstractItemView, QPlainTextEdit
 
+from . import i18n
+
+
+def _message_box(kind: str, parent: QWidget | None, title: str, text: str, *args):
+    """Show a translated standard dialog while preserving its Qt button choices."""
+    return getattr(QMessageBox, kind)(parent, i18n.tr(title), i18n.tr(text), *args)
+
 from . import core
 
 ACCENT = "#48e5c2"
@@ -193,9 +200,17 @@ class PackagePreviewDialog(QDialog):
         layout.addWidget(title)
         source = ", ".join(plan["selected"])
         summary = QLabel(
-            f"Seçtiklerin: {source}\n"
-            f"Pacman'ın kaldıracağı paketler (bağımlılıkları dahil): {len(plan['targets'])}\n"
-            f"Kurulu boyut tahmini: {core.human_size(plan['size'])}"
+            (
+                f"Selected: {source}\n"
+                f"Packages Pacman will remove (including dependencies): {len(plan['targets'])}\n"
+                f"Estimated installed size: {core.human_size(plan['size'])}"
+            )
+            if i18n.get_language() == "en"
+            else (
+                f"Seçtiklerin: {source}\n"
+                f"Pacman'ın kaldıracağı paketler (bağımlılıkları dahil): {len(plan['targets'])}\n"
+                f"Kurulu boyut tahmini: {core.human_size(plan['size'])}"
+            )
         )
         summary.setWordWrap(True)
         layout.addWidget(summary)
@@ -231,6 +246,7 @@ class PackagePreviewDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        i18n.translate_widget_tree(self)
 
 
 class ConfirmDialog(QDialog):
@@ -311,6 +327,7 @@ class ConfirmDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        i18n.translate_widget_tree(self)
 
 
 class SettingsDialog(QDialog):
@@ -321,6 +338,11 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Temizci ayarları")
         self.setMinimumWidth(480)
         self.settings = settings
+        self.language = QComboBox()
+        self.language.addItem("Türkçe", "tr")
+        self.language.addItem("English", "en")
+        current_language = str(settings.value("ui/language", "tr"))
+        self.language.setCurrentIndex(max(0, self.language.findData(current_language)))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
         layout.setSpacing(14)
@@ -336,6 +358,7 @@ class SettingsDialog(QDialog):
 
         form = QFormLayout()
         form.setSpacing(12)
+        form.addRow("Dil", self.language)
         self.profile = QComboBox()
         self.profile.addItem("Önerilen — yalnızca güvenli öğeler", "recommended")
         self.profile.addItem("Derin inceleme — güvenli + dikkat", "deep")
@@ -386,6 +409,7 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        i18n.translate_widget_tree(self)
 
     def save_preferences(self) -> None:
         self.settings.setValue("workflow/profile", self.profile.currentData())
@@ -394,6 +418,7 @@ class SettingsDialog(QDialog):
         self.settings.setValue("scan/auto", self.auto_scan.isChecked())
         self.settings.setValue("scan/scheduled", self.scheduled_scan.isChecked())
         self.settings.setValue("scan/interval_minutes", self.schedule_interval.currentData())
+        self.settings.setValue("ui/language", self.language.currentData())
         self.settings.sync()
 
 
@@ -408,7 +433,13 @@ class HistoryDialog(QDialog):
         heading.setObjectName("brand")
         heading.setStyleSheet("font-size:19px")
         layout.addWidget(heading)
-        layout.addWidget(QLabel(f"Geçmiş dosyası: {core.HISTORY_FILE}"))
+        layout.addWidget(
+            QLabel(
+                f"History file: {core.HISTORY_FILE}"
+                if i18n.get_language() == "en"
+                else f"Geçmiş dosyası: {core.HISTORY_FILE}"
+            )
+        )
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -427,10 +458,16 @@ class HistoryDialog(QDialog):
             card.setObjectName("panel")
             card_layout = QVBoxLayout(card)
             card_layout.setContentsMargins(12, 10, 12, 10)
-            when = QLabel(f"{entry.get('time', 'Tarih bilinmiyor')} · {entry.get('mode', 'delete')}")
+            mode = entry.get("mode", "delete")
+            mode_label = ("Move to Trash" if mode == "trash" else "Permanent delete") if i18n.get_language() == "en" else ("Çöpe taşı" if mode == "trash" else "Kalıcı sil")
+            when = QLabel(f"{entry.get('time', 'Unknown date' if i18n.get_language() == 'en' else 'Tarih bilinmiyor')} · {mode_label}")
             when.setStyleSheet("font-weight:700")
             card_layout.addWidget(when)
-            total = QLabel(f"Toplam: {core.human_size(entry.get('freed', 0))}")
+            total = QLabel(
+                f"Total: {core.human_size(entry.get('freed', 0))}"
+                if i18n.get_language() == "en"
+                else f"Toplam: {core.human_size(entry.get('freed', 0))}"
+            )
             total.setObjectName("muted")
             card_layout.addWidget(total)
             for item in entry.get("items", [])[:12]:
@@ -448,6 +485,7 @@ class HistoryDialog(QDialog):
         close = QPushButton("Kapat")
         close.clicked.connect(self.accept)
         layout.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
+        i18n.translate_widget_tree(self)
 
 
 class MainWindow(QMainWindow):
@@ -457,6 +495,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(960, 680)
         self.resize(1240, 850)
         self.settings = QSettings("Temizci", "Temizci")
+        i18n.set_language(str(self.settings.value("ui/language", "tr")))
         core.LARGE_FILE_MIN = int(self.settings.value("scan/large_file_mb", 150)) * 1024**2
         self.items: list[core.Item] = []
         self.by_id: dict[str, core.Item] = {}
@@ -477,10 +516,10 @@ class MainWindow(QMainWindow):
         self._apply_schedule()
         self._update_disk()
         if self.settings.value("scan/auto", True, type=bool):
-            self.statusBar().showMessage("Sistem taranıyor…")
+            self._show_status("Sistem taranıyor…")
             self.scan()
         else:
-            self.statusBar().showMessage("Taramaya hazır · 'Yeniden tara' ile başlayabilirsin")
+            self._show_status("Taramaya hazır · 'Yeniden tara' ile başlayabilirsin")
 
     def _make_ui(self) -> None:
         outer = QWidget()
@@ -645,6 +684,7 @@ class MainWindow(QMainWindow):
         self.clean_button.clicked.connect(self.confirm_clean)
         footer.addWidget(self.clean_button)
         clean_layout.addLayout(footer)
+        i18n.translate_widget_tree(self)
 
     def _build_packages_page(self) -> None:
         layout = QVBoxLayout(self.packages_page)
@@ -831,6 +871,7 @@ class MainWindow(QMainWindow):
         startup_buttons.addWidget(self.restore_autostart_button)
         startup_layout.addLayout(startup_buttons)
         layout.addWidget(startup_frame)
+        i18n.translate_widget_tree(self)
 
     def _page_changed(self, index: int) -> None:
         if index == 1 and not self.packages_loaded:
@@ -860,11 +901,11 @@ class MainWindow(QMainWindow):
         self.package_items = packages
         self.packages_loaded = True
         self._render_packages()
-        self.statusBar().showMessage(f"Paket envanteri hazır · {len(packages)} paket", 7000)
+        self._show_status(f"Paket envanteri hazır · {len(packages)} paket", 7000)
 
     def _packages_failed(self, message: str) -> None:
         self.package_count_label.setText("Paket envanteri alınamadı")
-        QMessageBox.warning(self, "Pacman sorgulanamadı", message)
+        _message_box("warning", self, "Pacman sorgulanamadı", message)
 
     def _render_packages(self) -> None:
         self.package_tree.blockSignals(True)
@@ -885,6 +926,7 @@ class MainWindow(QMainWindow):
             self.package_tree.addTopLevelItem(item)
         self.package_tree.blockSignals(False)
         self._filter_packages()
+        i18n.translate_widget_tree(self)
 
     def _filter_packages(self, *_args) -> None:
         if not hasattr(self, "package_tree"):
@@ -901,7 +943,9 @@ class MainWindow(QMainWindow):
             row.setHidden(not is_visible)
         checked = len(self._selected_package_names())
         visible = sum(not self.package_tree.topLevelItem(i).isHidden() for i in range(self.package_tree.topLevelItemCount()))
-        self.package_count_label.setText(f"{checked} seçili · {visible} / {len(self.package_items)} paket gösteriliyor")
+        self.package_count_label.setText(
+            i18n.tr(f"{checked} seçili · {visible} / {len(self.package_items)} paket gösteriliyor")
+        )
         self.package_preview_button.setEnabled(checked > 0 and not (self.package_worker and self.package_worker.isRunning()))
 
     def _package_checked(self, _item: QTreeWidgetItem, _column: int) -> None:
@@ -914,14 +958,30 @@ class MainWindow(QMainWindow):
         package = item.data(0, Qt.ItemDataRole.UserRole)
         if not package:
             return
-        reason = "Kullanıcı tarafından açıkça kurulmuş" if package["explicit"] else "Bağımlılık olarak kurulmuş"
+        reason = (
+            "Explicitly installed by the user" if package["explicit"] else "Installed as a dependency"
+        ) if i18n.get_language() == "en" else (
+            "Kullanıcı tarafından açıkça kurulmuş" if package["explicit"] else "Bağımlılık olarak kurulmuş"
+        )
         if package["orphan"]:
-            reason = "Artık bağımlılık — şu anda başka bir paketin gereksinimi değil"
+            reason = (
+                "Orphan dependency — no installed package currently requires it"
+                if i18n.get_language() == "en"
+                else "Artık bağımlılık — şu anda başka bir paketin gereksinimi değil"
+            )
         required_by = package["required_by"]
         self.package_detail.setPlainText(
-            f"{package['description']}\n"
-            f"Kurulum: {reason} · Kaynak: {package['source'] or 'bilinmiyor'} · "
-            f"Gerekli olduğu paketler: {required_by} · Kurulum tarihi: {package['install_date'] or 'bilinmiyor'}"
+            (
+                f"{package['description']}\n"
+                f"Install reason: {reason} · Repository: {package['source'] or 'unknown'} · "
+                f"Required by: {required_by} · Install date: {package['install_date'] or 'unknown'}"
+            )
+            if i18n.get_language() == "en"
+            else (
+                f"{package['description']}\n"
+                f"Kurulum: {reason} · Kaynak: {package['source'] or 'bilinmiyor'} · "
+                f"Gerekli olduğu paketler: {required_by} · Kurulum tarihi: {package['install_date'] or 'bilinmiyor'}"
+            )
         )
 
     def _selected_package_names(self) -> list[str]:
@@ -956,7 +1016,7 @@ class MainWindow(QMainWindow):
         if not names:
             return
         if len(names) > 120:
-            QMessageBox.warning(self, "Çok fazla paket", "Önizleme başına en fazla 120 paket seçebilirsin.")
+            _message_box("warning", self, "Çok fazla paket", "Önizleme başına en fazla 120 paket seçebilirsin.")
             return
         worker = PackagePreviewWorker(names)
         worker.finished_plan.connect(self._package_plan_ready)
@@ -965,19 +1025,19 @@ class MainWindow(QMainWindow):
         self.package_worker = worker
         self.package_preview_button.setEnabled(False)
         self.package_count_label.setText("Pacman'ın salt okunur işlem planı hazırlanıyor…")
-        self.statusBar().showMessage("Paket kaldırma planı hesaplanıyor; sistem değiştirilmiyor")
+        self._show_status("Paket kaldırma planı hesaplanıyor; sistem değiştirilmiyor")
         worker.start()
 
     def _package_plan_ready(self, plan: dict) -> None:
         dialog = PackagePreviewDialog(plan, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._open_command_terminal(plan["command"])
-            self.statusBar().showMessage("Pacman terminalde açıldı; son işlem onayı ve sudo parolası terminalde.", 9000)
+            self._show_status("Pacman terminalde açıldı; son işlem onayı ve sudo parolası terminalde.", 9000)
         self._filter_packages()
 
     def _package_plan_failed(self, message: str) -> None:
         self._filter_packages()
-        QMessageBox.warning(self, "İşlem planı oluşturulamadı", message)
+        _message_box("warning", self, "İşlem planı oluşturulamadı", message)
 
     def refresh_performance(self) -> None:
         if self.performance_worker and self.performance_worker.isRunning():
@@ -999,7 +1059,7 @@ class MainWindow(QMainWindow):
 
     def _performance_failed(self, message: str) -> None:
         self.performance_summary.setText("Performans ölçümü başarısız")
-        QMessageBox.warning(self, "Ölçüm yapılamadı", message)
+        _message_box("warning", self, "Ölçüm yapılamadı", message)
 
     def _performance_ready(self, report: dict) -> None:
         self.performance_loaded = True
@@ -1007,32 +1067,43 @@ class MainWindow(QMainWindow):
         disk = core.disk_info()
         swap_pct = round(report["swap_used"] * 100 / report["swap_total"]) if report["swap_total"] else 0
         load = " · ".join(f"{value:.2f}" for value in report["load"]) or "bilinmiyor"
-        summary = (
-            f"RAM: {core.human_size(report['memory_used'])} / {core.human_size(report['memory_total'])} (%{memory_pct:g})   ·   "
-            f"Swap: {core.human_size(report['swap_used'])} / {core.human_size(report['swap_total'])} (%{swap_pct})   ·   "
-            f"Yük ortalaması: {load}   ·   Disk: %{disk['percent']} dolu\n"
-            f"Açılış: {report['boot_time'] or 'ölçülemedi'}   ·   "
-            f"Güç profili: {report['power_profile']}   ·   CPU governor: {report['cpu_governor']}   ·   "
-            f"fstrim.timer: {report['trim_enabled']} ({report['trim_active']})"
-        )
+        if i18n.get_language() == "en":
+            summary = (
+                f"Memory: {core.human_size(report['memory_used'])} / {core.human_size(report['memory_total'])} ({memory_pct:g}%)   ·   "
+                f"Swap: {core.human_size(report['swap_used'])} / {core.human_size(report['swap_total'])} ({swap_pct}%)   ·   "
+                f"Load average: {load}   ·   Disk: {disk['percent']}% used\n"
+                f"Boot: {report['boot_time'] or 'not available'}   ·   "
+                f"Power profile: {report['power_profile']}   ·   CPU governor: {report['cpu_governor']}   ·   "
+                f"fstrim.timer: {report['trim_enabled']} ({report['trim_active']})"
+            )
+        else:
+            summary = (
+                f"RAM: {core.human_size(report['memory_used'])} / {core.human_size(report['memory_total'])} (%{memory_pct:g})   ·   "
+                f"Swap: {core.human_size(report['swap_used'])} / {core.human_size(report['swap_total'])} (%{swap_pct})   ·   "
+                f"Yük ortalaması: {load}   ·   Disk: %{disk['percent']} dolu\n"
+                f"Açılış: {report['boot_time'] or 'ölçülemedi'}   ·   "
+                f"Güç profili: {report['power_profile']}   ·   CPU governor: {report['cpu_governor']}   ·   "
+                f"fstrim.timer: {report['trim_enabled']} ({report['trim_active']})"
+            )
         self.performance_summary.setText(summary)
 
         recommendations = []
+        english = i18n.get_language() == "en"
         if disk["percent"] >= 90:
-            recommendations.append("• Disk kullanımı %90 üzerinde; büyük dosyalar ve önbelleklerde yer açmak ilk adımdır.")
+            recommendations.append("• Disk usage is above 90%; reviewing large files and caches is a good first step." if english else "• Disk kullanımı %90 üzerinde; büyük dosyalar ve önbelleklerde yer açmak ilk adımdır.")
         elif disk["percent"] >= 80:
-            recommendations.append("• Disk kullanımı yüksek; gereksiz dosyaları temizlemek güncelleme alanı bırakır.")
+            recommendations.append("• Disk usage is high; removing unneeded files can leave room for updates." if english else "• Disk kullanımı yüksek; gereksiz dosyaları temizlemek güncelleme alanı bırakır.")
         if memory_pct >= 90:
-            recommendations.append("• RAM baskısı yüksek. Başlangıçta açılan uygulamaları azaltmayı ve büyük uygulamaları kapatmayı incele.")
+            recommendations.append("• Memory pressure is high. Review startup apps and close applications you do not need." if english else "• RAM baskısı yüksek. Başlangıçta açılan uygulamaları azaltmayı ve büyük uygulamaları kapatmayı incele.")
         elif report["swap_total"] and swap_pct >= 60:
-            recommendations.append("• Swap kullanımı yüksek. Bu tek başına sorun değildir; RAM doluluğu ve ağır uygulamalarla birlikte değerlendir.")
+            recommendations.append("• Swap usage is high. This is not automatically a problem; consider it alongside memory pressure and active workloads." if english else "• Swap kullanımı yüksek. Bu tek başına sorun değildir; RAM doluluğu ve ağır uygulamalarla birlikte değerlendir.")
         if report["root_is_ssd"] and report["trim_supported"] and report["trim_enabled"] != "enabled":
-            recommendations.append("• Sistem SSD/NVMe üzerinde ve discard destekli; fstrim zamanlayıcısı etkin değil. İstersen aşağıdaki düğmeden etkinleştir.")
+            recommendations.append("• The system disk supports SSD/NVMe discard, but the fstrim timer is disabled. You can enable it below." if english else "• Sistem SSD/NVMe üzerinde ve discard destekli; fstrim zamanlayıcısı etkin değil. İstersen aşağıdaki düğmeden etkinleştir.")
         if report["power_profile"] != "performance" and shutil.which("powerprofilesctl"):
-            recommendations.append("• Güç profili performans değil. İstersen daha yüksek tepki için performans profiline geç; pil tüketimi ve fan sesi artabilir.")
+            recommendations.append("• The current power profile is not performance. Switching may improve responsiveness but can increase heat, fan noise, and battery use." if english else "• Güç profili performans değil. İstersen daha yüksek tepki için performans profiline geç; pil tüketimi ve fan sesi artabilir.")
         if not recommendations:
-            recommendations.append("• Kritik RAM/disk baskısı veya eksik SSD TRIM ayarı görünmüyor. Açılış ve servis ölçümlerini aşağıdan incele.")
-        recommendations.append("• Sistem servislerini otomatik kapatmıyoruz: ağ, Bluetooth, güç yönetimi veya masaüstü işlevleri etkilenebilir.")
+            recommendations.append("• No critical memory/disk pressure or missing SSD TRIM setting was detected. Review boot and service diagnostics below." if english else "• Kritik RAM/disk baskısı veya eksik SSD TRIM ayarı görünmüyor. Açılış ve servis ölçümlerini aşağıdan incele.")
+        recommendations.append("• System services are never disabled automatically; doing so could affect networking, Bluetooth, power management, or desktop features." if english else "• Sistem servislerini otomatik kapatmıyoruz: ağ, Bluetooth, güç yönetimi veya masaüstü işlevleri etkilenebilir.")
         self.performance_recommendations.setPlainText("\n".join(recommendations))
 
         self.power_profile_button.setEnabled(report["power_profile"] != "performance" and bool(shutil.which("powerprofilesctl")))
@@ -1054,7 +1125,7 @@ class MainWindow(QMainWindow):
         for unit in report["enabled_units"]:
             self.units_tree.addTopLevelItem(QTreeWidgetItem([unit]))
         self._render_autostart(report.get("autostart", []), core.list_disabled_autostart())
-        self.statusBar().showMessage("Performans ölçümü tamamlandı · hiçbir ayar değiştirilmedi", 7000)
+        self._show_status("Performans ölçümü tamamlandı · hiçbir ayar değiştirilmedi", 7000)
 
     def _render_autostart(self, entries: list[dict], disabled: list[dict]) -> None:
         self.autostart_tree.clear()
@@ -1074,6 +1145,7 @@ class MainWindow(QMainWindow):
             self.disabled_autostart_tree.addTopLevelItem(item)
         self.disable_autostart_button.setEnabled(bool(entries))
         self.restore_autostart_button.setEnabled(bool(disabled))
+        i18n.translate_widget_tree(self)
 
     def _checked_startup_files(self, tree: QTreeWidget) -> list[str]:
         return [
@@ -1085,18 +1157,25 @@ class MainWindow(QMainWindow):
     def disable_autostart(self) -> None:
         filenames = self._checked_startup_files(self.autostart_tree)
         if not filenames:
-            QMessageBox.information(self, "Öğe seçilmedi", "Devre dışı bırakmak istediğin kullanıcı başlangıç uygulamalarını işaretle.")
+            _message_box("information", self, "Öğe seçilmedi", "Devre dışı bırakmak istediğin kullanıcı başlangıç uygulamalarını işaretle.")
             return
         names = [
             self.autostart_tree.topLevelItem(index).text(0)
             for index in range(self.autostart_tree.topLevelItemCount())
             if self.autostart_tree.topLevelItem(index).checkState(0) == Qt.CheckState.Checked
         ]
-        answer = QMessageBox.question(
+        answer = _message_box(
+            "question",
             self,
             "Başlangıç uygulamalarını devre dışı bırak",
-            "Bu uygulamalar sonraki oturum açılışında otomatik başlamayacak. Dosyalar silinmez; Temizci'den geri yüklenebilir.\n\n"
-            + "\n".join(f"• {name}" for name in names),
+            (
+                "These apps will not start automatically at your next login. Their files will not be deleted; "
+                "you can restore them in Temizci.\n\n"
+                + "\n".join(f"• {name}" for name in names)
+            ) if i18n.get_language() == "en" else (
+                "Bu uygulamalar sonraki oturum açılışında otomatik başlamayacak. Dosyalar silinmez; Temizci'den geri yüklenebilir.\n\n"
+                + "\n".join(f"• {name}" for name in names)
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -1104,20 +1183,27 @@ class MainWindow(QMainWindow):
             return
         results = core.disable_user_autostart(filenames)
         errors = [item["error"] for item in results if not item["ok"]]
-        self.statusBar().showMessage(f"{len(results) - len(errors)} başlangıç uygulaması sonraki oturum için devre dışı", 8000)
+        changed = len(results) - len(errors)
+        self._show_status(
+            f"{changed} startup app{'s' if changed != 1 else ''} disabled until your next login"
+            if i18n.get_language() == "en"
+            else f"{changed} başlangıç uygulaması sonraki oturum için devre dışı",
+            8000,
+        )
         if errors:
-            QMessageBox.warning(self, "Bazı öğeler değiştirilemedi", "\n".join(errors))
+            _message_box("warning", self, "Bazı öğeler değiştirilemedi", "\n".join(errors))
         self.refresh_performance()
 
     def restore_autostart(self) -> None:
         filenames = self._checked_startup_files(self.disabled_autostart_tree)
         if not filenames:
-            QMessageBox.information(self, "Öğe seçilmedi", "Geri yüklemek istediğin başlangıç uygulamalarını işaretle.")
+            _message_box("information", self, "Öğe seçilmedi", "Geri yüklemek istediğin başlangıç uygulamalarını işaretle.")
             return
-        answer = QMessageBox.question(
+        answer = _message_box(
+            "question",
             self,
             "Başlangıç uygulamalarını geri yükle",
-            "Seçilen uygulamalar sonraki oturum açılışında tekrar otomatik başlayacak. Devam edilsin mi?",
+            "Selected apps will start automatically again at your next login. Continue?" if i18n.get_language() == "en" else "Seçilen uygulamalar sonraki oturum açılışında tekrar otomatik başlayacak. Devam edilsin mi?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -1125,16 +1211,24 @@ class MainWindow(QMainWindow):
             return
         results = core.restore_user_autostart(filenames)
         errors = [item["error"] for item in results if not item["ok"]]
-        self.statusBar().showMessage(f"{len(results) - len(errors)} başlangıç uygulaması geri yüklendi", 8000)
+        restored = len(results) - len(errors)
+        self._show_status(
+            f"{restored} startup app{'s' if restored != 1 else ''} restored"
+            if i18n.get_language() == "en"
+            else f"{restored} başlangıç uygulaması geri yüklendi",
+            8000,
+        )
         if errors:
-            QMessageBox.warning(self, "Bazı öğeler geri yüklenemedi", "\n".join(errors))
+            _message_box("warning", self, "Bazı öğeler geri yüklenemedi", "\n".join(errors))
         self.refresh_performance()
 
     def set_performance_profile(self) -> None:
-        answer = QMessageBox.question(
+        answer = _message_box(
+            "question",
             self,
             "Performans profili",
-            "Bu profil işlemci tepkisini artırabilir; fan sesi, sıcaklık ve pil tüketimi de artabilir. "
+            "This profile may improve CPU responsiveness but can increase fan noise, temperature, and battery use. "
+            "The command will only be opened in a terminal. Continue?" if i18n.get_language() == "en" else "Bu profil işlemci tepkisini artırabilir; fan sesi, sıcaklık ve pil tüketimi de artabilir. "
             "Sadece terminalde komut açılacak; devam etmek istiyor musun?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
@@ -1143,10 +1237,11 @@ class MainWindow(QMainWindow):
             self._open_command_terminal("powerprofilesctl set performance")
 
     def enable_trim(self) -> None:
-        answer = QMessageBox.question(
+        answer = _message_box(
+            "question",
             self,
             "SSD TRIM zamanlayıcısı",
-            "Bu, destekleyen SSD/NVMe diskler için systemd fstrim zamanlayıcısını etkinleştirir. "
+            "This enables the systemd fstrim timer for supported SSD/NVMe drives. The command will request your sudo password in a terminal. Continue?" if i18n.get_language() == "en" else "Bu, destekleyen SSD/NVMe diskler için systemd fstrim zamanlayıcısını etkinleştirir. "
             "Komut sudo parolanı terminalde ister. Devam edilsin mi?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
@@ -1161,7 +1256,7 @@ class MainWindow(QMainWindow):
         core.LARGE_FILE_MIN = int(self.settings.value("scan/large_file_mb", 150)) * 1024**2
         self.scan_button.setEnabled(False)
         self.clean_button.setEnabled(False)
-        self.statusBar().showMessage("Sistem taranıyor…")
+        self._show_status("Sistem taranıyor…")
         worker = ScanWorker(self)
         worker.progress.connect(self._scan_progress)
         worker.finished_items.connect(self._scan_finished)
@@ -1171,7 +1266,7 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _scan_progress(self, done: int, total: int, label: str) -> None:
-        self.statusBar().showMessage(f"Taranıyor: {label} ({done}/{total})")
+        self._show_status(f"Taranıyor: {i18n.tr(label)} ({done}/{total})")
 
     def _scan_finished(self, items: list[core.Item]) -> None:
         self.items = items
@@ -1179,11 +1274,11 @@ class MainWindow(QMainWindow):
         self._apply_profile()
         self._update_disk()
         self.render_items()
-        self.statusBar().showMessage(f"Tarama tamamlandı · {len(items)} öğe bulundu", 7000)
+        self._show_status(f"Tarama tamamlandı · {len(items)} öğe bulundu", 7000)
 
     def _scan_failed(self, message: str) -> None:
-        self.statusBar().showMessage(f"Tarama hatası: {message}", 10000)
-        QMessageBox.critical(self, "Tarama başarısız", message)
+        self._show_status(f"Tarama hatası: {message}", 10000)
+        _message_box("critical", self, "Tarama başarısız", message)
 
     def _worker_done(self) -> None:
         self.scan_button.setEnabled(True)
@@ -1196,7 +1291,7 @@ class MainWindow(QMainWindow):
             self.scan()
 
     def export_support_report(self) -> None:
-        privacy = (
+        privacy_tr = (
             "Rapor toplulukla paylaşılmaya uygun olacak şekilde hazırlanır. İçerdiği bilgiler:\n"
             "• Dağıtım/sürüm, çekirdek sürümü, mimari ve masaüstü ailesi\n"
             "• Disk ve bellek kapasitesi/kullanım oranı, açılış özeti, güç/TRIM durumu\n"
@@ -1205,10 +1300,20 @@ class MainWindow(QMainWindow):
             "systemd servis adları ve başlangıç komutları rapora alınmaz. Raporu kaydetmeden önce "
             "oluşturulan JSON'u inceleyebilirsin. Devam edilsin mi?"
         )
-        answer = QMessageBox.question(
+        privacy_en = (
+            "This report is prepared for community troubleshooting and includes:\n"
+            "• Distribution/version, kernel version, architecture, and desktop family\n"
+            "• Disk and memory capacity/usage, boot summary, power/TRIM status\n"
+            "• Whether relevant system tools are available\n\n"
+            "Usernames, computer names, home directories, disk IDs, file paths, package names, "
+            "systemd service names, and startup commands are excluded. Review the generated JSON "
+            "before saving. Continue?"
+        )
+        answer = _message_box(
+            "question",
             self,
             "Gizliliği koruyan tanı raporu",
-            privacy,
+            privacy_en if i18n.get_language() == "en" else privacy_tr,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -1216,11 +1321,13 @@ class MainWindow(QMainWindow):
             return
         report = core.community_support_report()
         preview_dialog = QDialog(self)
-        preview_dialog.setWindowTitle("Paylaşılabilir tanı raporu · önizleme")
+        preview_dialog.setWindowTitle(i18n.tr("Paylaşılabilir tanı raporu · önizleme"))
         preview_dialog.resize(760, 620)
         preview_layout = QVBoxLayout(preview_dialog)
         preview_text = QLabel(
-            "Kaydetmeden önce içeriği incele. Rapor salt okunur ölçümler içerir; hiçbir sistem ayarını değiştirmez."
+            "Review the report before saving. It contains read-only diagnostics and does not change system settings."
+            if i18n.get_language() == "en"
+            else "Kaydetmeden önce içeriği incele. Rapor salt okunur ölçümler içerir; hiçbir sistem ayarını değiştirmez."
         )
         preview_text.setWordWrap(True)
         preview_layout.addWidget(preview_text)
@@ -1229,7 +1336,10 @@ class MainWindow(QMainWindow):
         preview_json.setPlainText(json.dumps(report, ensure_ascii=False, indent=2))
         preview_layout.addWidget(preview_json, 1)
         preview_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
-        save_preview = preview_buttons.addButton("İnceledim · dosyaya kaydet…", QDialogButtonBox.ButtonRole.AcceptRole)
+        save_preview = preview_buttons.addButton(
+            "Reviewed · save report…" if i18n.get_language() == "en" else "İnceledim · dosyaya kaydet…",
+            QDialogButtonBox.ButtonRole.AcceptRole,
+        )
         save_preview.setObjectName("primary")
         preview_buttons.accepted.connect(preview_dialog.accept)
         preview_buttons.rejected.connect(preview_dialog.reject)
@@ -1238,9 +1348,9 @@ class MainWindow(QMainWindow):
             return
         filename, _ = QFileDialog.getSaveFileName(
             self,
-            "Tanı raporunu kaydet",
+            "Save support report" if i18n.get_language() == "en" else "Tanı raporunu kaydet",
             str(Path.home() / "temizci-tani-raporu.json"),
-            "JSON raporu (*.json)",
+            "JSON report (*.json)" if i18n.get_language() == "en" else "JSON raporu (*.json)",
         )
         if not filename:
             return
@@ -1249,26 +1359,38 @@ class MainWindow(QMainWindow):
         try:
             destination = core.write_community_support_report(filename, report)
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Rapor kaydedilemedi", str(exc))
+            _message_box("warning", self, "Rapor kaydedilemedi", str(exc))
             return
-        QMessageBox.information(
+        _message_box(
+            "information",
             self,
             "Rapor hazır",
-            f"Gizliliği koruyan tanı raporu kaydedildi:\n{destination}\n\n"
+            (
+                f"Privacy-conscious support report saved to:\n{destination}\n\n"
+                "Open and review the report before sharing it with the community."
+            )
+            if i18n.get_language() == "en"
+            else f"Gizliliği koruyan tanı raporu kaydedildi:\n{destination}\n\n"
             "Toplulukla paylaşmadan önce dosyayı açıp içeriğini yine de gözden geçir.",
         )
 
     def _update_disk(self) -> None:
         disk = core.disk_info()
         percent = int(disk.get("percent", 0))
-        self.disk_line.setText(f"{percent}% dolu")
+        self.disk_line.setText(i18n.tr(f"{percent}% dolu"))
         self.disk_progress.setValue(percent)
         self.disk_detail.setText(
-            f"{core.human_size(disk['used'])} / {core.human_size(disk['total'])} kullanılıyor · {core.human_size(disk['free'])} boş"
+            f"{core.human_size(disk['used'])} / {core.human_size(disk['total'])} "
+            + ("used · " if i18n.get_language() == "en" else "kullanılıyor · ")
+            + f"{core.human_size(disk['free'])} "
+            + ("free" if i18n.get_language() == "en" else "boş")
         )
         report = core.system_report()
         self.has_snapshots = bool(report.get("snapshots"))
-        self.subtitle.setText(f"{report['os']} · çekirdek {report['kernel']} · yalnızca yerel uygulama")
+        self.subtitle.setText(
+            f"{report['os']} · "
+            + (f"kernel {report['kernel']} · local app only" if i18n.get_language() == "en" else f"çekirdek {report['kernel']} · yalnızca yerel uygulama")
+        )
 
     def _update_metrics(self) -> None:
         chosen = [self.by_id[item_id] for item_id in self.selected if item_id in self.by_id]
@@ -1278,19 +1400,19 @@ class MainWindow(QMainWindow):
         trash_item = next((item for item in self.items if item.rule_id == "trash"), None)
         self.metrics["selected"].setText(core.human_size(selected_size))
         if chosen:
-            selection_note = f"{len(chosen)} öğe seçildi"
+            selection_note = i18n.tr(f"{len(chosen)} öğe seçildi")
         elif self.items:
-            selection_note = "Güvenli seçim yok · Dikkat öğelerini incele"
+            selection_note = i18n.tr("Güvenli seçim yok · Dikkat öğelerini incele")
         else:
-            selection_note = "Tarama bekleniyor"
+            selection_note = i18n.tr("Tarama bekleniyor")
         self.metrics["selected_note"].setText(selection_note)
         self.metrics["safe"].setText(core.human_size(safe_size))
-        self.metrics["safe_note"].setText("güvenli temizlenebilir")
+        self.metrics["safe_note"].setText(i18n.tr("güvenli temizlenebilir"))
         self.metrics["found"].setText(core.human_size(found_size))
-        self.metrics["found_note"].setText(f"{len(self.items)} öğe bulundu")
+        self.metrics["found_note"].setText(i18n.tr(f"{len(self.items)} öğe bulundu"))
         self.metrics["trash"].setText(core.human_size(trash_item.size if trash_item else 0))
-        self.metrics["trash_note"].setText("çöp kutusundaki alan")
-        self.selection_label.setText(f"{len(chosen)} öğe seçildi · {core.human_size(selected_size)}")
+        self.metrics["trash_note"].setText(i18n.tr("çöp kutusundaki alan"))
+        self.selection_label.setText(i18n.tr(f"{len(chosen)} öğe seçildi · {core.human_size(selected_size)}"))
         self.clean_button.setEnabled(bool(chosen) and not (self.worker and self.worker.isRunning()))
         self.clear_button.setEnabled(bool(chosen))
         recommended_count = sum(
@@ -1309,7 +1431,7 @@ class MainWindow(QMainWindow):
             notes.append("Btrfs snapshot algılandı; silinen dosyaların alanı hemen boşalmayabilir.")
         if running:
             notes.append("Açık uygulamalar: " + ", ".join(running) + ". Önbelleklerini temizlemeden önce kapat.")
-        self.warning.setText("  •  ".join(notes))
+        self.warning.setText("  •  ".join(i18n.tr(note) for note in notes))
         self.warning.setVisible(bool(notes))
 
     def _filter_changed(self, index: int) -> None:
@@ -1344,8 +1466,16 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.settings, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        old_language = i18n.get_language()
         old_threshold = int(self.settings.value("scan/large_file_mb", 150))
         dialog.save_preferences()
+        new_language = str(self.settings.value("ui/language", "tr"))
+        if new_language != old_language:
+            i18n.set_language(new_language)
+            i18n.translate_widget_tree(self)
+            current_package = self.package_tree.currentItem()
+            if current_package:
+                self._package_details_changed(current_package, None)
         new_threshold = int(self.settings.value("scan/large_file_mb", 150))
         profile = str(self.settings.value("workflow/profile", "recommended"))
         self._updating_profile = True
@@ -1354,11 +1484,17 @@ class MainWindow(QMainWindow):
         self._apply_profile()
         self._apply_schedule()
         self.render_items()
+        if new_language != old_language and self.performance_loaded:
+            self.performance_loaded = False
+            self.refresh_performance()
         if old_threshold != new_threshold and self.items:
-            self.statusBar().showMessage("Büyük dosya eşiği değişti; sonuçlar yenileniyor…")
+            self._show_status("Büyük dosya eşiği değişti; sonuçlar yenileniyor…")
             self.scan()
         else:
-            self.statusBar().showMessage("Tercihler kaydedildi", 5000)
+            self._show_status("Tercihler kaydedildi", 5000)
+
+    def _show_status(self, message: str, timeout: int = 0) -> None:
+        self.statusBar().showMessage(i18n.tr(message), timeout)
 
     def show_history(self) -> None:
         HistoryDialog(self).exec()
@@ -1367,7 +1503,7 @@ class MainWindow(QMainWindow):
         path = core.TRASH_DIR / "files"
         path.mkdir(parents=True, exist_ok=True)
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
-            QMessageBox.warning(self, "Çöp kutusu açılamadı", f"Klasör şu konumda: {path}")
+            _message_box("warning", self, "Çöp kutusu açılamadı", f"Folder location: {path}" if i18n.get_language() == "en" else f"Klasör şu konumda: {path}")
 
     def _apply_schedule(self) -> None:
         self.schedule_timer.stop()
@@ -1375,15 +1511,12 @@ class MainWindow(QMainWindow):
             return
         minutes = max(1, int(self.settings.value("scan/interval_minutes", 360)))
         self.schedule_timer.start(minutes * 60 * 1000)
-        self.statusBar().showMessage(
-            f"Planlı tarama açık · her {minutes} dakikada bir · otomatik silme kapalı",
-            8000,
-        )
+        self._show_status(f"Planlı tarama açık · her {minutes} dakikada bir · otomatik silme kapalı", 8000)
 
     def _scheduled_scan(self) -> None:
         if self.worker and self.worker.isRunning():
             return
-        self.statusBar().showMessage("Planlı tarama başladı · dosyalar silinmeyecek", 5000)
+        self._show_status("Planlı tarama başladı · dosyalar silinmeyecek", 5000)
         self.scan()
 
     def render_items(self, *_args) -> None:
@@ -1398,7 +1531,7 @@ class MainWindow(QMainWindow):
             for item in self.items
             if (self.filter_risk == "all" or item.risk == self.filter_risk)
             and (not self.only_selected.isChecked() or item.id in self.selected)
-            and (not query or query in f"{item.title} {item.detail} {item.path or ''}".casefold())
+            and (not query or query in f"{i18n.tr(item.title)} {i18n.tr(item.detail)} {item.path or ''}".casefold())
         ]
         for category, metadata in sorted(core.CATEGORIES.items(), key=lambda pair: pair[1]["order"]):
             group = [item for item in visible if item.category == category]
@@ -1409,7 +1542,10 @@ class MainWindow(QMainWindow):
             else:
                 group.sort(key=lambda item: item.size, reverse=True)
             size = core.reclaimable_total(group)
-            section = QLabel(f"{metadata['title'].upper()}     ·     {len(group)} öğe     ·     {core.human_size(size)}")
+            section = QLabel(
+                f"{i18n.tr(metadata['title']).upper()}     ·     {len(group)} "
+                f"{'items' if i18n.get_language() == 'en' else 'öğe'}     ·     {core.human_size(size)}"
+            )
             section.setObjectName("section")
             self.list_layout.insertWidget(self.list_layout.count() - 1, section)
             for candidate in group:
@@ -1421,6 +1557,7 @@ class MainWindow(QMainWindow):
             empty.setMinimumHeight(120)
             self.list_layout.insertWidget(self.list_layout.count() - 1, empty)
         self._update_metrics()
+        i18n.translate_widget_tree(self)
 
     def _item_card(self, item: core.Item) -> QFrame:
         card = QFrame()
@@ -1432,17 +1569,19 @@ class MainWindow(QMainWindow):
         row.setSpacing(11)
         checkbox = QCheckBox()
         checkbox.setChecked(item.id in self.selected)
-        checkbox.setAccessibleName(f"{item.title} seç")
+        checkbox.setAccessibleName(
+            f"Select {i18n.tr(item.title)}" if i18n.get_language() == "en" else f"{item.title} seç"
+        )
         checkbox.toggled.connect(lambda checked, ident=item.id: self._toggle(ident, checked))
         row.addWidget(checkbox, 0, Qt.AlignmentFlag.AlignTop)
 
         detail_col = QVBoxLayout()
         title_row = QHBoxLayout()
-        name = QLabel(item.title)
+        name = QLabel(i18n.tr(item.title))
         name.setStyleSheet("font-weight:600; font-size:13px")
         name.setWordWrap(True)
         title_row.addWidget(name)
-        risk = QLabel(RISK_LABELS.get(item.risk, item.risk.upper()))
+        risk = QLabel(i18n.tr(RISK_LABELS.get(item.risk, item.risk.upper())))
         risk.setObjectName(item.risk)
         title_row.addWidget(risk, 0, Qt.AlignmentFlag.AlignTop)
         if item.requires_root:
@@ -1455,7 +1594,7 @@ class MainWindow(QMainWindow):
             title_row.addWidget(active, 0, Qt.AlignmentFlag.AlignTop)
         title_row.addStretch()
         detail_col.addLayout(title_row)
-        description = QLabel(item.detail)
+        description = QLabel(i18n.tr(item.detail))
         description.setObjectName("muted")
         description.setWordWrap(True)
         detail_col.addWidget(description)
@@ -1471,12 +1610,12 @@ class MainWindow(QMainWindow):
         size.setAlignment(Qt.AlignmentFlag.AlignRight)
         size.setStyleSheet("font-size:14px; font-weight:700")
         right.addWidget(size)
-        count = QLabel("tahmini" if item.action == "command" else f"{item.files} dosya")
+        count = QLabel(i18n.tr("tahmini" if item.action == "command" else f"{item.files} dosya"))
         count.setObjectName("dim")
         count.setAlignment(Qt.AlignmentFlag.AlignRight)
         right.addWidget(count)
         if item.action == "command":
-            terminal = QPushButton("Terminalde aç")
+            terminal = QPushButton("Open in terminal" if i18n.get_language() == "en" else "Terminalde aç")
             terminal.setToolTip(item.command or "")
             terminal.clicked.connect(lambda _checked=False, candidate=item: self.open_terminal(candidate))
             right.addWidget(terminal)
@@ -1524,7 +1663,7 @@ class MainWindow(QMainWindow):
         snapshot = {item.id: item for item in chosen}
         self.clean_button.setEnabled(False)
         self.scan_button.setEnabled(False)
-        self.statusBar().showMessage("Seçilen öğeler temizleniyor…")
+        self._show_status("Seçilen öğeler temizleniyor…")
         worker = CleanWorker(snapshot, ids, dialog.mode)
         worker.finished_results.connect(lambda results, mode=dialog.mode: self._clean_finished(results, mode))
         worker.finished.connect(self._worker_done)
@@ -1534,19 +1673,25 @@ class MainWindow(QMainWindow):
     def _clean_finished(self, results: list[dict], mode: str) -> None:
         freed = sum(result.get("freed", 0) for result in results)
         self.selected.clear()
-        self.statusBar().showMessage(f"Temizlik tamamlandı · {core.human_size(freed)}", 7000)
+        self._show_status(f"Temizlik tamamlandı · {core.human_size(freed)}", 7000)
         lines = []
         for result in results:
             if result["status"] == "needs_terminal":
-                lines.append(f"• {result['title']}: terminalde açılması gerekiyor\n  {result['command']}")
+                lines.append(f"• {i18n.tr(result['title'])}: " + ("must be opened in a terminal" if i18n.get_language() == "en" else "terminalde açılması gerekiyor") + f"\n  {result['command']}")
             elif result.get("error"):
-                lines.append(f"• {result['title']}: {result['error']}")
+                lines.append(f"• {i18n.tr(result['title'])}: {i18n.tr(result['error'])}")
             else:
-                lines.append(f"• {result['title']}: {core.human_size(result.get('freed', 0))}")
+                lines.append(f"• {i18n.tr(result['title'])}: {core.human_size(result.get('freed', 0))}")
         heading = "Temizlik tamamlandı"
         if mode == "trash":
             heading += " (öğeler çöp kutusuna taşındı)"
-        QMessageBox.information(self, heading, f"Boşaltılan: {core.human_size(freed)}\n\n" + "\n".join(lines))
+        if i18n.get_language() == "en":
+            heading = "Cleanup complete" + (" (items moved to Trash)" if mode == "trash" else "")
+            result_text = f"Reclaimed: {core.human_size(freed)}\n\n" + "\n".join(lines)
+        else:
+            heading = "Temizlik tamamlandı" + (" (öğeler çöp kutusuna taşındı)" if mode == "trash" else "")
+            result_text = f"Boşaltılan: {core.human_size(freed)}\n\n" + "\n".join(lines)
+        _message_box("information", self, heading, result_text)
         # Temizlik sonrası kalan alanı ve çöp kutusunu güncel verilerle yeniden tara.
         self.scan_after_clean = True
 
@@ -1567,7 +1712,7 @@ class MainWindow(QMainWindow):
                 if core.package_removal_command(tokens[4:]) != command:
                     raise ValueError("Paket komutu doğrulanamadı")
             except ValueError as exc:
-                QMessageBox.warning(self, "Güvenlik nedeniyle engellendi", str(exc))
+                _message_box("warning", self, "Güvenlik nedeniyle engellendi", str(exc))
                 return
         candidates = [
             ("foot", ["foot", "--title=Temizci", "-e"]),
@@ -1576,23 +1721,25 @@ class MainWindow(QMainWindow):
             ("konsole", ["konsole", "-e"]),
             ("xterm", ["xterm", "-T", "Temizci", "-e"]),
         ]
-        script = f"{command}; printf '\\n\\nİşlem tamamlandı. Kapatmak için Enter\\n'; read -r"
+        wait_message = "Operation finished. Press Enter to close" if i18n.get_language() == "en" else "İşlem tamamlandı. Kapatmak için Enter"
+        script = f"{command}; printf '\\n\\n{wait_message}\\n'; read -r"
         for binary, args in candidates:
             if shutil.which(binary):
                 try:
                     subprocess.Popen(args + ["bash", "-lc", script], start_new_session=True)
-                    self.statusBar().showMessage("Terminal açıldı; sudo parolanı terminalde gir.", 6000)
+                    self._show_status("Terminal açıldı; sudo parolanı terminalde gir.", 6000)
                 except OSError as exc:
-                    QMessageBox.warning(self, "Terminal açılamadı", str(exc))
+                    _message_box("warning", self, "Terminal açılamadı", str(exc))
                 return
-        QMessageBox.warning(self, "Terminal bulunamadı", "foot, alacritty, ghostty, konsole veya xterm kurulu olmalı.")
+        _message_box("warning", self, "Terminal bulunamadı", "Install foot, alacritty, ghostty, konsole, or xterm." if i18n.get_language() == "en" else "foot, alacritty, ghostty, konsole veya xterm kurulu olmalı.")
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt event API
         if self.worker and self.worker.isRunning():
-            QMessageBox.information(
+            _message_box(
+                "information",
                 self,
                 "İşlem devam ediyor",
-                "Tarama veya temizlik bitince pencereyi kapatabilirsin.",
+                "Wait for the scan or cleanup to finish before closing this window." if i18n.get_language() == "en" else "Tarama veya temizlik bitince pencereyi kapatabilirsin.",
             )
             event.ignore()
             return

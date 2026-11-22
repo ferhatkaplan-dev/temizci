@@ -18,6 +18,7 @@ does not silently delete files, remove packages, or disable system services.
 - Per-user autostart entries can be reversibly disabled and restored; system
   services are informational only.
 - A privacy-conscious support report for community troubleshooting.
+- Turkish and English native UI; switch languages instantly in **Settings → Language**.
 
 ## Install and run
 
