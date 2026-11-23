@@ -26,6 +26,12 @@ files, removes packages, or disables system services.
   services are informational only.
 - A privacy-conscious support report for community troubleshooting.
 - Turkish and English native UI; switch languages instantly in **Settings → Language**.
+- Parallel scan steps, fast/balanced/thorough modes, category scoping, and
+  excluded paths that are enforced during cleanup as well as discovery.
+- Workflow profiles (recommended, deep, low-disk, developer, gaming, privacy,
+  manual) pre-select items within clear category/risk boundaries and never
+  auto-select risky items.
+- Partial results appear while scanning, with a progress bar and elapsed time.
 
 ## Install and run
 
@@ -53,6 +59,36 @@ temizci ui                    # optional UI at 127.0.0.1
 Review a support report before sharing it. It omits usernames, hostnames, home
 paths, disk identifiers, file paths, package names, service names, and autostart
 commands. Hardware and system measurements may still be identifying in context.
+
+## Scan performance and workflows
+
+Temizci gives you control over scan scope and repeat-scan cost:
+
+| Setting | Effect |
+|---|---|
+| **Balanced** | Scans every category; the everyday default. |
+| **Fast** | Skips large-file discovery, so first results arrive sooner. |
+| **Thorough** | Lists up to 100 large-file results rather than the default 40. |
+| **Parallel workers** | Runs independent collectors concurrently. 2 is recommended; higher values can slow scans on some disks. |
+| **Categories** | Restricts the scan to selected categories (for example, browser caches only). |
+| **Excluded paths** | These directories are never scanned or cleaned; the exclusion is re-checked at cleanup time. |
+
+Results stream in as collectors finish, and the status bar reports the total
+elapsed time. Speed settings only change discovery scope; they never delete
+anything automatically.
+
+```bash
+temizci presets                              # list workflow profiles
+temizci scan --mode fast --workers 2         # quick scan
+temizci scan --category browsers --stats     # browser caches + timing
+temizci scan --exclude ~/Projects --json     # skip projects
+temizci clean --preset developer             # preview only
+temizci clean --preset gaming --trash --yes  # move profile matches to Trash
+```
+
+`--stats` writes per-collector timings to `stderr` without corrupting JSON
+output. Excluded paths are validated again during cleanup, so a path added after
+a scan cannot be removed by a stale selection.
 
 ## Safety
 

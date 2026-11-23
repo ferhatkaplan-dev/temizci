@@ -11,6 +11,27 @@ from . import core, server
 RISK_LABELS = {"safe": "güvenli", "caution": "dikkat", "risky": "riskli"}
 
 
+def _scan_options(args: argparse.Namespace) -> core.ScanOptions:
+    mode = getattr(args, "mode", "balanced")
+    return core.ScanOptions(
+        mode=mode,
+        workers=getattr(args, "workers", core.DEFAULT_SCAN_WORKERS),
+        categories=tuple(getattr(args, "category", None) or ()),
+        excludes=tuple(getattr(args, "exclude", None) or ()),
+        large_file_limit=100 if mode == "thorough" else 40,
+    )
+
+
+def _print_stats(stats: dict) -> None:
+    print(
+        f"Tarama: {stats.get('elapsed', 0):.2f} sn · {stats.get('mode')} · "
+        f"{stats.get('workers')} işçi · {stats.get('items', 0)} öğe",
+        file=sys.stderr,
+    )
+    for label, duration in stats.get("collectors", {}).items():
+        print(f"  {duration:5.2f} sn  {label}", file=sys.stderr)
+
+
 def _print_scan(items: list[core.Item]) -> None:
     if not items:
         print("Temizlenecek bir şey bulunamadı.")
@@ -46,9 +67,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
         if not args.json:
             print(f"\r[{done}/{total}] {label}…".ljust(60), end="", file=sys.stderr, flush=True)
 
-    items = core.scan_all(progress=progress)
+    stats: dict = {}
+    items = core.scan_all(progress=progress, options=_scan_options(args), stats=stats)
     if not args.json:
         print("\r" + " " * 60 + "\r", end="", file=sys.stderr)
+    if args.stats:
+        _print_stats(stats)
     if args.json:
         print(json.dumps([item.to_dict() for item in items], ensure_ascii=False, indent=2))
     else:
@@ -58,7 +82,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 def cmd_clean(args: argparse.Namespace) -> int:
     print("Tarama yapılıyor…", file=sys.stderr)
-    items = core.scan_all()
+    items = core.scan_all(options=_scan_options(args))
     by_id = {item.id: item for item in items}
 
     if args.ids:
@@ -67,6 +91,9 @@ def cmd_clean(args: argparse.Namespace) -> int:
         if missing:
             print(f"Bilinmeyen kimlik: {', '.join(missing)}", file=sys.stderr)
             return 2
+    elif args.preset:
+        selected_ids = core.select_items(items, args.preset)
+        ids = [item.id for item in items if item.id in selected_ids]
     elif args.include_risky:
         ids = [item.id for item in items if item.action != "command"]
     else:
@@ -96,7 +123,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
         return 0
 
     mode = "trash" if args.trash else "delete"
-    results = core.clean_items(by_id, [item.id for item in deletable], mode=mode)
+    results = core.clean_items(by_id, [item.id for item in deletable], mode=mode, excludes=args.exclude)
     freed = sum(r.get("freed", 0) for r in results)
     errors = [r for r in results if r.get("status") in {"error", "partial"}]
     for result in results:
@@ -149,6 +176,17 @@ def cmd_support_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_presets(_args: argparse.Namespace) -> int:
+    print("Kullanılabilir iş akışı profilleri:\n")
+    for key, workflow in core.WORKFLOWS.items():
+        risks = ", ".join(sorted(workflow.risks, key=lambda r: core.RISK_ORDER[r])) or "seçim yok"
+        categories = ", ".join(sorted(workflow.categories)) if workflow.categories else "tüm kategoriler"
+        print(f"  {key:<12} {workflow.title}")
+        print(f"  {'':<12} {workflow.description}")
+        print(f"  {'':<12} Risk: {risks} · Kapsam: {categories}\n")
+    return 0
+
+
 def cmd_ui(args: argparse.Namespace) -> int:
     server.run(port=args.port, open_browser=not args.no_browser)
     return 0
@@ -182,14 +220,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan = sub.add_parser("scan", help="Sistemi tara ve nelerin silinebileceğini göster")
     scan.add_argument("--json", action="store_true", help="JSON çıktısı ver")
+    scan.add_argument("--mode", choices=core.SCAN_MODES, default="balanced", help="Tarama modu (varsayılan: balanced)")
+    scan.add_argument("--workers", type=int, default=core.DEFAULT_SCAN_WORKERS, help="Paralel koleksiyoncu sayısı (1-8)")
+    scan.add_argument(
+        "--category",
+        action="append",
+        choices=["system", "caches", "browsers", "dev", "backups", "files", "trash"],
+        help="Yalnızca bu kategoriyi tara (birden fazla kez verilebilir)",
+    )
+    scan.add_argument("--exclude", action="append", metavar="YOL", help="Bu yolu taramadan hariç tut (tekrarlanabilir)")
+    scan.add_argument("--stats", action="store_true", help="Süre ve koleksiyoncu dağılımını stderr'e yaz")
     scan.set_defaults(func=cmd_scan)
 
     clean = sub.add_parser("clean", help="Temizlik yap (varsayılan olarak yalnızca önizleme)")
     clean.add_argument("--ids", help="Virgülle ayrılmış öğe kimlikleri")
     clean.add_argument("--trash", action="store_true", help="Kalıcı silmek yerine çöp kutusuna taşı")
     clean.add_argument("--include-risky", action="store_true", help="Riskli öğeleri de seç")
+    clean.add_argument("--preset", choices=list(core.WORKFLOWS), help="İş akışı profiline göre ön seçim yap")
+    clean.add_argument("--mode", choices=core.SCAN_MODES, default="balanced", help="Tarama modu (varsayılan: balanced)")
+    clean.add_argument("--workers", type=int, default=core.DEFAULT_SCAN_WORKERS, help="Paralel koleksiyoncu sayısı (1-8)")
+    clean.add_argument(
+        "--category",
+        action="append",
+        choices=["system", "caches", "browsers", "dev", "backups", "files", "trash"],
+        help="Yalnızca bu kategoriyi tara (birden fazla kez verilebilir)",
+    )
+    clean.add_argument("--exclude", action="append", metavar="YOL", help="Bu yolu tarama ve temizlikten hariç tut")
     clean.add_argument("--yes", action="store_true", help="Önizlemeyi uygula")
     clean.set_defaults(func=cmd_clean)
+
+    presets = sub.add_parser("presets", help="İş akışı profillerini ve kapsamlarını listele")
+    presets.set_defaults(func=cmd_presets)
 
     doctor = sub.add_parser("doctor", help="Sistem ve disk bilgilerini göster")
     doctor.add_argument("--scan", action="store_true", help="Ayrıca tarama yap")
@@ -212,3 +273,6 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nİptal edildi.", file=sys.stderr)
         return 130
+    except ValueError as exc:
+        print(f"Geçersiz ayar: {exc}", file=sys.stderr)
+        return 2

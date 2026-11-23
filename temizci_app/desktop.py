@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -108,12 +109,21 @@ QStatusBar {{ background: #0c1419; color: #92a6ae; border-top: 1px solid #26353d
 
 class ScanWorker(QThread):
     progress = Signal(int, int, str)
+    partial_items = Signal(object)
     finished_items = Signal(object)
     failed = Signal(str)
 
+    def __init__(self, options: core.ScanOptions | None = None):
+        super().__init__()
+        self.options = options or core.ScanOptions()
+
     def run(self) -> None:
         try:
-            items = core.scan_all(progress=lambda done, total, label: self.progress.emit(done, total, label))
+            items = core.scan_all(
+                progress=lambda done, total, label: self.progress.emit(done, total, label),
+                options=self.options,
+                on_partial=lambda partial: self.partial_items.emit(partial),
+            )
             self.finished_items.emit(items)
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))
@@ -122,14 +132,29 @@ class ScanWorker(QThread):
 class CleanWorker(QThread):
     finished_results = Signal(object)
 
-    def __init__(self, items: dict[str, core.Item], ids: list[str], mode: str):
+    def __init__(self, items: dict[str, core.Item], ids: list[str], mode: str, excludes=()):
         super().__init__()
         self.items = items
         self.ids = ids
         self.mode = mode
+        self.excludes = tuple(excludes)
 
     def run(self) -> None:
-        results = core.clean_items(self.items, self.ids, mode=self.mode)
+        try:
+            results = core.clean_items(self.items, self.ids, mode=self.mode, excludes=self.excludes)
+        except Exception as exc:  # noqa: BLE001
+            self.finished_results.emit(
+                [
+                    {
+                        "id": "",
+                        "title": "Temizlik",
+                        "status": "error",
+                        "error": str(exc),
+                        "freed": 0,
+                    }
+                ]
+            )
+            return
         core.append_history(
             {
                 "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -333,70 +358,41 @@ class ConfirmDialog(QDialog):
 class SettingsDialog(QDialog):
     """Kullanıcı tercihleri; hiçbir ayar otomatik silme izni vermez."""
 
+    CATEGORY_LABELS = (
+        ("system", "Sistem"),
+        ("caches", "Uygulama önbellekleri"),
+        ("browsers", "Tarayıcı önbellekleri"),
+        ("dev", "Geliştirici araçları"),
+        ("backups", "Eski yedekler"),
+        ("files", "Büyük dosyalar"),
+        ("trash", "Çöp kutusu"),
+    )
+
     def __init__(self, settings: QSettings, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("Temizci ayarları")
-        self.setMinimumWidth(480)
+        self.resize(620, 660)
+        self.setMinimumWidth(560)
         self.settings = settings
-        self.language = QComboBox()
-        self.language.addItem("Türkçe", "tr")
-        self.language.addItem("English", "en")
-        current_language = str(settings.value("ui/language", "tr"))
-        self.language.setCurrentIndex(max(0, self.language.findData(current_language)))
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
-        layout.setSpacing(14)
+        layout.setSpacing(12)
 
         heading = QLabel("İş akışı ve tercihler")
         heading.setObjectName("brand")
         heading.setStyleSheet("font-size:19px")
         layout.addWidget(heading)
-        intro = QLabel("Bu ayarlar tarama ve ön seçimleri düzenler. Hiçbir ayar otomatik dosya silmez.")
+        intro = QLabel("Bu ayarlar tarama kapsamını ve ön seçimleri düzenler. Hiçbir ayar otomatik dosya silmez.")
         intro.setWordWrap(True)
         intro.setObjectName("muted")
         layout.addWidget(intro)
 
-        form = QFormLayout()
-        form.setSpacing(12)
-        form.addRow("Dil", self.language)
-        self.profile = QComboBox()
-        self.profile.addItem("Önerilen — yalnızca güvenli öğeler", "recommended")
-        self.profile.addItem("Derin inceleme — güvenli + dikkat", "deep")
-        self.profile.addItem("Manuel — otomatik seçim yok", "manual")
-        current_profile = str(settings.value("workflow/profile", "recommended"))
-        self.profile.setCurrentIndex(max(0, self.profile.findData(current_profile)))
-        form.addRow("Varsayılan tarama profili", self.profile)
-
-        self.mode = QComboBox()
-        self.mode.addItem("Çöp kutusuna taşı (önerilen)", "trash")
-        self.mode.addItem("Kalıcı sil", "delete")
-        current_mode = str(settings.value("cleanup/default_mode", "trash"))
-        self.mode.setCurrentIndex(max(0, self.mode.findData(current_mode)))
-        form.addRow("Varsayılan temizlik yöntemi", self.mode)
-
-        self.threshold = QSpinBox()
-        self.threshold.setRange(50, 4096)
-        self.threshold.setSuffix(" MB")
-        self.threshold.setSingleStep(50)
-        self.threshold.setValue(int(settings.value("scan/large_file_mb", 150)))
-        form.addRow("Büyük dosya eşiği", self.threshold)
-
-        self.auto_scan = QCheckBox("Uygulama açıldığında otomatik tara")
-        self.auto_scan.setChecked(settings.value("scan/auto", True, type=bool))
-        form.addRow("Başlangıç", self.auto_scan)
-
-        self.scheduled_scan = QCheckBox("Uygulama açıkken düzenli tarama yap")
-        self.scheduled_scan.setChecked(settings.value("scan/scheduled", False, type=bool))
-        form.addRow("Planlı tarama", self.scheduled_scan)
-        self.schedule_interval = QComboBox()
-        for label, minutes in (("Her 30 dakikada", 30), ("Saatte bir", 60), ("6 saatte bir", 360), ("Günde bir", 1440)):
-            self.schedule_interval.addItem(label, minutes)
-        current_interval = int(settings.value("scan/interval_minutes", 360))
-        self.schedule_interval.setCurrentIndex(max(0, self.schedule_interval.findData(current_interval)))
-        self.schedule_interval.setEnabled(self.scheduled_scan.isChecked())
-        self.scheduled_scan.toggled.connect(self.schedule_interval.setEnabled)
-        form.addRow("Tarama aralığı", self.schedule_interval)
-        layout.addLayout(form)
+        tabs = QTabWidget()
+        tabs.addTab(self._build_general_tab(), "Genel")
+        tabs.addTab(self._build_scan_tab(), "Tarama")
+        tabs.addTab(self._build_workflow_tab(), "İş akışı")
+        layout.addWidget(tabs, 1)
 
         safety_note = QLabel("Güvenlik: riskli yedekler otomatik seçilmez. Temizlik öncesi onay her zaman zorunludur.")
         safety_note.setWordWrap(True)
@@ -406,18 +402,201 @@ class SettingsDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         save = buttons.addButton("Kaydet", QDialogButtonBox.ButtonRole.AcceptRole)
         save.setObjectName("primary")
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self._accept_if_valid)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         i18n.translate_widget_tree(self)
+        self._update_profile_note()
+
+    # -- sekmeler --------------------------------------------------------
+    def _build_general_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        form = QFormLayout()
+        form.setSpacing(12)
+
+        self.language = QComboBox()
+        self.language.addItem("Türkçe", "tr")
+        self.language.addItem("English", "en")
+        current_language = str(self.settings.value("ui/language", "tr"))
+        self.language.setCurrentIndex(max(0, self.language.findData(current_language)))
+        form.addRow("Dil", self.language)
+
+        self.mode = QComboBox()
+        self.mode.addItem("Çöp kutusuna taşı (önerilen)", "trash")
+        self.mode.addItem("Kalıcı sil", "delete")
+        current_mode = str(self.settings.value("cleanup/default_mode", "trash"))
+        self.mode.setCurrentIndex(max(0, self.mode.findData(current_mode)))
+        form.addRow("Varsayılan temizlik yöntemi", self.mode)
+
+        self.auto_scan = QCheckBox("Uygulama açıldığında otomatik tara")
+        self.auto_scan.setChecked(self.settings.value("scan/auto", True, type=bool))
+        form.addRow("Başlangıç", self.auto_scan)
+        layout.addLayout(form)
+        layout.addStretch()
+        return page
+
+    def _build_scan_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        form = QFormLayout()
+        form.setSpacing(12)
+
+        self.scan_mode = QComboBox()
+        self.scan_mode.addItem("Dengeli", "balanced")
+        self.scan_mode.addItem("Hızlı", "fast")
+        self.scan_mode.addItem("Kapsamlı", "thorough")
+        current_scan_mode = str(self.settings.value("scan/mode", "balanced"))
+        self.scan_mode.setCurrentIndex(max(0, self.scan_mode.findData(current_scan_mode)))
+        self.scan_mode.setToolTip(
+            "Dengeli: tüm kategoriler. Hızlı: büyük dosya taramasını atlar. "
+            "Kapsamlı: varsayılan 40 yerine 100 büyük dosya sonucu gösterir."
+        )
+        form.addRow("Tarama modu", self.scan_mode)
+
+        self.workers = QSpinBox()
+        self.workers.setRange(1, 8)
+        self.workers.setValue(int(self.settings.value("scan/workers", core.DEFAULT_SCAN_WORKERS)))
+        self.workers.setToolTip(
+            "Bağımsız tarama adımlarının paralel sayısı. 2 önerilir; "
+            "yüksek değerler bazı disklerde taramayı yavaşlatabilir."
+        )
+        form.addRow("Paralel tarama işçisi", self.workers)
+
+        self.threshold = QSpinBox()
+        self.threshold.setRange(50, 4096)
+        self.threshold.setSuffix(" MB")
+        self.threshold.setSingleStep(50)
+        self.threshold.setValue(int(self.settings.value("scan/large_file_mb", 150)))
+        form.addRow("Büyük dosya eşiği", self.threshold)
+        layout.addLayout(form)
+
+        categories_label = QLabel("Kategoriler")
+        categories_label.setObjectName("section")
+        layout.addWidget(categories_label)
+        self.category_boxes: dict[str, QCheckBox] = {}
+        known_categories = {key for key, _title in self.CATEGORY_LABELS}
+        stored_categories = [
+            part.strip()
+            for part in str(self.settings.value("scan/categories", "")).split(",")
+            if part.strip() in known_categories
+        ]
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(6)
+        for index, (key, title) in enumerate(self.CATEGORY_LABELS):
+            box = QCheckBox(title)
+            box.setChecked(not stored_categories or key in stored_categories)
+            self.category_boxes[key] = box
+            grid.addWidget(box, index // 2, index % 2)
+        layout.addLayout(grid)
+        hint = QLabel("En az bir kategori seçili olmalı. Tümü seçilirse tarama tam kapsamlıdır.")
+        hint.setWordWrap(True)
+        hint.setObjectName("dim")
+        layout.addWidget(hint)
+
+        exclude_label = QLabel("Hariç tutulan yollar")
+        exclude_label.setObjectName("section")
+        layout.addWidget(exclude_label)
+        self.excludes = QPlainTextEdit()
+        self.excludes.setPlaceholderText("Bir yol / satır. Örnek: ~/Projects/arsiv")
+        self.excludes.setFixedHeight(84)
+        self.excludes.setPlainText(str(self.settings.value("scan/excludes", "")))
+        layout.addWidget(self.excludes)
+        exclude_hint = QLabel(
+            "Bu yollar taranmaz ve temizlenemez. Göreli yollar kabul edilmez; kök dizin hariç tutulamaz."
+        )
+        exclude_hint.setWordWrap(True)
+        exclude_hint.setObjectName("dim")
+        layout.addWidget(exclude_hint)
+        layout.addStretch()
+        return page
+
+    def _build_workflow_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        form = QFormLayout()
+        form.setSpacing(12)
+
+        self.profile = QComboBox()
+        for key, workflow in core.WORKFLOWS.items():
+            self.profile.addItem(workflow.title, key)
+            self.profile.setItemData(
+                self.profile.count() - 1, workflow.description, Qt.ItemDataRole.ToolTipRole
+            )
+        current_profile = str(self.settings.value("workflow/profile", "recommended"))
+        self.profile.setCurrentIndex(max(0, self.profile.findData(current_profile)))
+        self.profile.currentIndexChanged.connect(self._update_profile_note)
+        form.addRow("Varsayılan iş akışı", self.profile)
+        layout.addLayout(form)
+
+        self.profile_note = QLabel("")
+        self.profile_note.setWordWrap(True)
+        self.profile_note.setObjectName("muted")
+        layout.addWidget(self.profile_note)
+
+        self.scheduled_scan = QCheckBox("Uygulama açıkken düzenli tarama yap")
+        self.scheduled_scan.setChecked(self.settings.value("scan/scheduled", False, type=bool))
+        layout.addWidget(self.scheduled_scan)
+        self.schedule_interval = QComboBox()
+        for label, minutes in (("Her 30 dakikada", 30), ("Saatte bir", 60), ("6 saatte bir", 360), ("Günde bir", 1440)):
+            self.schedule_interval.addItem(label, minutes)
+        current_interval = int(self.settings.value("scan/interval_minutes", 360))
+        self.schedule_interval.setCurrentIndex(max(0, self.schedule_interval.findData(current_interval)))
+        self.schedule_interval.setEnabled(self.scheduled_scan.isChecked())
+        self.scheduled_scan.toggled.connect(self.schedule_interval.setEnabled)
+        layout.addWidget(self.schedule_interval)
+        schedule_hint = QLabel("Planlı tarama yalnızca uygulama açıkken çalışır ve hiçbir dosyayı otomatik silmez.")
+        schedule_hint.setWordWrap(True)
+        schedule_hint.setObjectName("dim")
+        layout.addWidget(schedule_hint)
+        layout.addStretch()
+        return page
+
+    def _update_profile_note(self, *_args) -> None:
+        workflow = core.WORKFLOWS.get(str(self.profile.currentData()))
+        if workflow is not None:
+            self.profile_note.setText(i18n.tr(workflow.description))
+
+    def _selected_categories(self) -> list[str]:
+        return [key for key, box in self.category_boxes.items() if box.isChecked()]
+
+    def _exclude_lines(self) -> list[str]:
+        return [line.strip() for line in self.excludes.toPlainText().splitlines() if line.strip()]
+
+    def _accept_if_valid(self) -> None:
+        if not self._selected_categories():
+            _message_box(
+                "warning",
+                self,
+                "Kategori seçilmedi",
+                "En az bir tarama kategorisi seç. Hiçbir dosya silinmedi.",
+            )
+            return
+        try:
+            core.normalize_excludes(self._exclude_lines())
+        except ValueError as exc:
+            _message_box("warning", self, "Geçersiz hariç tutma ayarı", str(exc))
+            return
+        self.accept()
 
     def save_preferences(self) -> None:
+        categories = self._selected_categories()
+        all_categories = len(categories) == len(self.category_boxes)
         self.settings.setValue("workflow/profile", self.profile.currentData())
         self.settings.setValue("cleanup/default_mode", self.mode.currentData())
         self.settings.setValue("scan/large_file_mb", self.threshold.value())
         self.settings.setValue("scan/auto", self.auto_scan.isChecked())
         self.settings.setValue("scan/scheduled", self.scheduled_scan.isChecked())
         self.settings.setValue("scan/interval_minutes", self.schedule_interval.currentData())
+        self.settings.setValue("scan/mode", self.scan_mode.currentData())
+        self.settings.setValue("scan/workers", self.workers.value())
+        self.settings.setValue("scan/categories", "" if all_categories else ",".join(categories))
+        self.settings.setValue("scan/excludes", "\n".join(self._exclude_lines()))
         self.settings.setValue("ui/language", self.language.currentData())
         self.settings.sync()
 
@@ -507,6 +686,8 @@ class MainWindow(QMainWindow):
         self.package_items: list[dict] = []
         self.packages_loaded = False
         self.performance_loaded = False
+        self._scan_started: float | None = None
+        self._updating_scan_mode = False
         self.has_snapshots = False
         self.scan_after_clean = False
         self._updating_profile = False
@@ -632,13 +813,29 @@ class MainWindow(QMainWindow):
         self.risk_combo.addItem("Riskli", "risky")
         self.risk_combo.currentIndexChanged.connect(self._filter_changed)
         toolbar.addWidget(self.risk_combo)
+        self.scan_mode_combo = QComboBox()
+        self.scan_mode_combo.addItem("Dengeli", "balanced")
+        self.scan_mode_combo.addItem("Hızlı", "fast")
+        self.scan_mode_combo.addItem("Kapsamlı", "thorough")
+        scan_mode = str(self.settings.value("scan/mode", "balanced"))
+        self.scan_mode_combo.setCurrentIndex(max(0, self.scan_mode_combo.findData(scan_mode)))
+        self.scan_mode_combo.setToolTip(
+            "Dengeli: tüm kategoriler. Hızlı: büyük dosya taramasını atlar. "
+            "Kapsamlı: varsayılan 40 yerine 100 büyük dosya sonucu gösterir."
+        )
+        self.scan_mode_combo.currentIndexChanged.connect(self._scan_mode_changed)
+        toolbar.addWidget(self.scan_mode_combo)
         self.workflow_combo = QComboBox()
-        self.workflow_combo.addItem("Önerilen", "recommended")
-        self.workflow_combo.addItem("Derin inceleme", "deep")
-        self.workflow_combo.addItem("Manuel seçim", "manual")
+        for key, workflow in core.WORKFLOWS.items():
+            self.workflow_combo.addItem(workflow.title, key)
+            self.workflow_combo.setItemData(
+                self.workflow_combo.count() - 1,
+                workflow.description,
+                Qt.ItemDataRole.ToolTipRole,
+            )
         profile = str(self.settings.value("workflow/profile", "recommended"))
         self.workflow_combo.setCurrentIndex(max(0, self.workflow_combo.findData(profile)))
-        self.workflow_combo.setToolTip("Önerilen: güvenli öğeler. Derin: güvenli ve dikkat öğeleri. Riskliler otomatik seçilmez.")
+        self.workflow_combo.setToolTip("İş akışı profili; tarama sonrası hangi öğelerin ön seçileceğini belirler.")
         self.workflow_combo.currentIndexChanged.connect(self._workflow_changed)
         toolbar.addWidget(self.workflow_combo)
         self.sort_combo = QComboBox()
@@ -649,10 +846,21 @@ class MainWindow(QMainWindow):
         self.only_selected = QCheckBox("Sadece seçili")
         self.only_selected.toggled.connect(self.render_items)
         toolbar.addWidget(self.only_selected)
-        self.select_safe_button = QPushButton("Önerilenleri seç")
+        self.select_safe_button = QPushButton("Profili uygula")
         self.select_safe_button.clicked.connect(self.select_safe)
         toolbar.addWidget(self.select_safe_button)
         clean_layout.addLayout(toolbar)
+
+        self.workflow_note = QLabel("")
+        self.workflow_note.setWordWrap(True)
+        self.workflow_note.setObjectName("muted")
+        clean_layout.addWidget(self.workflow_note)
+
+        self.scan_progress = QProgressBar()
+        self.scan_progress.setTextVisible(True)
+        self.scan_progress.setFormat("%v / %m")
+        self.scan_progress.hide()
+        clean_layout.addWidget(self.scan_progress)
 
         self.warning = QLabel("")
         self.warning.setWordWrap(True)
@@ -685,6 +893,7 @@ class MainWindow(QMainWindow):
         footer.addWidget(self.clean_button)
         clean_layout.addLayout(footer)
         i18n.translate_widget_tree(self)
+        self._update_workflow_note()
 
     def _build_packages_page(self) -> None:
         layout = QVBoxLayout(self.packages_page)
@@ -1254,11 +1463,38 @@ class MainWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             return
         core.LARGE_FILE_MIN = int(self.settings.value("scan/large_file_mb", 150)) * 1024**2
+        mode = str(self.settings.value("scan/mode", "balanced"))
+        categories = tuple(
+            part.strip()
+            for part in str(self.settings.value("scan/categories", "")).split(",")
+            if part.strip()
+        )
+        excludes = tuple(
+            line.strip()
+            for line in str(self.settings.value("scan/excludes", "")).splitlines()
+            if line.strip()
+        )
+        try:
+            options = core.ScanOptions(
+                mode=mode,
+                workers=int(self.settings.value("scan/workers", core.DEFAULT_SCAN_WORKERS)),
+                categories=categories,
+                excludes=excludes,
+                large_file_limit=100 if mode == "thorough" else 40,
+            )
+            core.normalize_excludes(options.excludes)
+        except ValueError as exc:
+            _message_box("warning", self, "Geçersiz hariç tutma ayarı", str(exc))
+            return
+        self._scan_started = time.monotonic()
         self.scan_button.setEnabled(False)
         self.clean_button.setEnabled(False)
+        self.scan_progress.setRange(0, 0)
+        self.scan_progress.show()
         self._show_status("Sistem taranıyor…")
-        worker = ScanWorker(self)
+        worker = ScanWorker(options)
         worker.progress.connect(self._scan_progress)
+        worker.partial_items.connect(self._scan_partial)
         worker.finished_items.connect(self._scan_finished)
         worker.failed.connect(self._scan_failed)
         worker.finished.connect(self._worker_done)
@@ -1266,7 +1502,16 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _scan_progress(self, done: int, total: int, label: str) -> None:
+        if total > 0:
+            self.scan_progress.setRange(0, total)
+            self.scan_progress.setValue(done)
         self._show_status(f"Taranıyor: {i18n.tr(label)} ({done}/{total})")
+
+    def _scan_partial(self, items: list[core.Item]) -> None:
+        self.items = items
+        self.by_id = {item.id: item for item in items}
+        self.render_items()
+        self._show_status(f"Tarama sürüyor · {len(items)} öğe bulundu…")
 
     def _scan_finished(self, items: list[core.Item]) -> None:
         self.items = items
@@ -1274,13 +1519,21 @@ class MainWindow(QMainWindow):
         self._apply_profile()
         self._update_disk()
         self.render_items()
-        self._show_status(f"Tarama tamamlandı · {len(items)} öğe bulundu", 7000)
+        elapsed = time.monotonic() - self._scan_started if self._scan_started else 0.0
+        mode = str(self.settings.value("scan/mode", "balanced"))
+        suffix = " · Hızlı tarama: büyük dosyalar atlandı" if mode == "fast" else ""
+        self._show_status(
+            f"Tarama tamamlandı · {len(items)} öğe · {elapsed:.1f} sn{suffix}",
+            7000,
+        )
 
     def _scan_failed(self, message: str) -> None:
+        self.scan_progress.hide()
         self._show_status(f"Tarama hatası: {message}", 10000)
         _message_box("critical", self, "Tarama başarısız", message)
 
     def _worker_done(self) -> None:
+        self.scan_progress.hide()
         self.scan_button.setEnabled(True)
         self._update_metrics()
         if self.worker:
@@ -1415,9 +1668,8 @@ class MainWindow(QMainWindow):
         self.selection_label.setText(i18n.tr(f"{len(chosen)} öğe seçildi · {core.human_size(selected_size)}"))
         self.clean_button.setEnabled(bool(chosen) and not (self.worker and self.worker.isRunning()))
         self.clear_button.setEnabled(bool(chosen))
-        recommended_count = sum(
-            item.risk == "safe" and item.action == "delete" and not item.meta.get("running")
-            for item in self.items
+        recommended_count = len(
+            core.select_items(self.items, str(self.settings.value("workflow/profile", "recommended")))
         )
         self.select_safe_button.setEnabled(recommended_count > 0)
 
@@ -1444,30 +1696,43 @@ class MainWindow(QMainWindow):
         profile = str(self.workflow_combo.itemData(index))
         self.settings.setValue("workflow/profile", profile)
         self.settings.sync()
+        self._update_workflow_note()
         if self.items:
             self._apply_profile()
             self.render_items()
 
+    def _update_workflow_note(self) -> None:
+        workflow = core.WORKFLOWS.get(str(self.workflow_combo.currentData()))
+        self.workflow_note.setText(i18n.tr(workflow.description) if workflow else "")
+
+    def _scan_mode_changed(self, index: int) -> None:
+        if self._updating_scan_mode:
+            return
+        mode = str(self.scan_mode_combo.itemData(index))
+        self.settings.setValue("scan/mode", mode)
+        self.settings.sync()
+        label = self.scan_mode_combo.currentText()
+        self._show_status(f"Tarama modu: {i18n.tr(label)} · sonraki taramada uygulanır", 5000)
+
     def _apply_profile(self) -> None:
         profile = str(self.settings.value("workflow/profile", "recommended"))
-        if profile == "manual":
-            self.selected.clear()
-            return
-        allowed_risks = {"safe"} if profile == "recommended" else {"safe", "caution"}
-        self.selected = {
-            item.id
-            for item in self.items
-            if item.risk in allowed_risks
-            and item.action == "delete"
-            and not item.meta.get("running")
-        }
+        self.selected = core.select_items(self.items, profile)
+
+    def _scan_signature(self) -> tuple:
+        return (
+            int(self.settings.value("scan/large_file_mb", 150)),
+            str(self.settings.value("scan/mode", "balanced")),
+            int(self.settings.value("scan/workers", core.DEFAULT_SCAN_WORKERS)),
+            str(self.settings.value("scan/categories", "")),
+            str(self.settings.value("scan/excludes", "")),
+        )
 
     def show_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         old_language = i18n.get_language()
-        old_threshold = int(self.settings.value("scan/large_file_mb", 150))
+        old_signature = self._scan_signature()
         dialog.save_preferences()
         new_language = str(self.settings.value("ui/language", "tr"))
         if new_language != old_language:
@@ -1476,19 +1741,25 @@ class MainWindow(QMainWindow):
             current_package = self.package_tree.currentItem()
             if current_package:
                 self._package_details_changed(current_package, None)
-        new_threshold = int(self.settings.value("scan/large_file_mb", 150))
+        new_signature = self._scan_signature()
         profile = str(self.settings.value("workflow/profile", "recommended"))
         self._updating_profile = True
         self.workflow_combo.setCurrentIndex(max(0, self.workflow_combo.findData(profile)))
         self._updating_profile = False
+        self._updating_scan_mode = True
+        self.scan_mode_combo.setCurrentIndex(
+            max(0, self.scan_mode_combo.findData(str(self.settings.value("scan/mode", "balanced"))))
+        )
+        self._updating_scan_mode = False
+        self._update_workflow_note()
         self._apply_profile()
         self._apply_schedule()
         self.render_items()
         if new_language != old_language and self.performance_loaded:
             self.performance_loaded = False
             self.refresh_performance()
-        if old_threshold != new_threshold and self.items:
-            self._show_status("Büyük dosya eşiği değişti; sonuçlar yenileniyor…")
+        if old_signature != new_signature and self.items:
+            self._show_status("Tarama kapsamı değişti; sonuçlar yenileniyor…")
             self.scan()
         else:
             self._show_status("Tercihler kaydedildi", 5000)
@@ -1640,11 +1911,7 @@ class MainWindow(QMainWindow):
                     widget.style().polish(widget)
 
     def select_safe(self) -> None:
-        self.selected = {
-            item.id
-            for item in self.items
-            if item.risk == "safe" and item.action == "delete" and not item.meta.get("running")
-        }
+        self._apply_profile()
         self.render_items()
 
     def clear_selection(self) -> None:
@@ -1664,7 +1931,12 @@ class MainWindow(QMainWindow):
         self.clean_button.setEnabled(False)
         self.scan_button.setEnabled(False)
         self._show_status("Seçilen öğeler temizleniyor…")
-        worker = CleanWorker(snapshot, ids, dialog.mode)
+        excludes = tuple(
+            line.strip()
+            for line in str(self.settings.value("scan/excludes", "")).splitlines()
+            if line.strip()
+        )
+        worker = CleanWorker(snapshot, ids, dialog.mode, excludes=excludes)
         worker.finished_results.connect(lambda results, mode=dialog.mode: self._clean_finished(results, mode))
         worker.finished.connect(self._worker_done)
         self.worker = worker

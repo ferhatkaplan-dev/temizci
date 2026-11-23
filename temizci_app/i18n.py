@@ -378,6 +378,48 @@ EN: dict[str, str] = {
     "ana profil yedeği": "main profile backup",
     "Ev dizininde duran Brain Forest çökme kurtarma arşivi. İçeriğinden emin değilseniz önce çöpe taşıyın.": "Brain Forest crash-recovery archive in your home directory. Move it to Trash first if you are unsure what it contains.",
     "Brain Forest çökme kurtarma arşivi. İçeriğinden emin değilseniz önce çöpe taşıyın.": "Brain Forest crash-recovery archive. Move it to Trash first if you are unsure what it contains.",
+    "Genel": "General",
+    "Tarama": "Scan",
+    "İş akışı": "Workflow",
+    "Tarama modu": "Scan mode",
+    "Dengeli": "Balanced",
+    "Hızlı": "Fast",
+    "Kapsamlı": "Thorough",
+    "Dengeli: tüm kategoriler. Hızlı: büyük dosya taramasını atlar. Kapsamlı: varsayılan 40 yerine 100 büyük dosya sonucu gösterir.": "Balanced: all categories. Fast: skips large-file discovery. Thorough: shows up to 100 large-file results instead of the default 40.",
+    "Paralel tarama işçisi": "Parallel scan workers",
+    "Bağımsız tarama adımlarının paralel sayısı. 2 önerilir; yüksek değerler bazı disklerde taramayı yavaşlatabilir.": "Number of independent scan steps to run in parallel. 2 is recommended; higher values can slow scans on some disks.",
+    "Kategoriler": "Categories",
+    "En az bir kategori seçili olmalı. Tümü seçilirse tarama tam kapsamlıdır.": "At least one category must be selected. Selecting all performs a full scan.",
+    "Kategori seçilmedi": "No category selected",
+    "En az bir tarama kategorisi seç. Hiçbir dosya silinmedi.": "Select at least one scan category. No files were deleted.",
+    "Hariç tutulan yollar": "Excluded paths",
+    "Bir yol / satır. Örnek: ~/Projects/arsiv": "One path per line. Example: ~/Projects/archive",
+    "Bu yollar taranmaz ve temizlenemez. Göreli yollar kabul edilmez; kök dizin hariç tutulamaz.": "These paths are never scanned or cleaned. Relative paths are rejected; the filesystem root cannot be excluded.",
+    "Varsayılan iş akışı": "Default workflow",
+    "İş akışı profili; tarama sonrası hangi öğelerin ön seçileceğini belirler.": "Workflow profile; controls which items are pre-selected after a scan.",
+    "Profili uygula": "Apply profile",
+    "Oyun ve grafik": "Gaming & graphics",
+    "Gizlilik": "Privacy",
+    "Düşük disk alanı": "Low disk space",
+    "Geliştirici": "Developer",
+    "Yalnızca güvenli öğeleri seçer; açık uygulamaların önbelleklerini ve riskli yedekleri atlar.": "Selects safe items only; skips caches of running apps and risky backups.",
+    "Güvenli ve dikkat öğelerini seçer; açık uygulamalar ile riskli yedekler yine atlanır.": "Selects safe and caution items; running apps and risky backups are still skipped.",
+    "Daha çok alan açmak için güvenli ve dikkat önbelleklerini seçer; kişisel büyük dosya ve yedekleri dışarıda bırakır.": "Frees more space by selecting safe and caution-level caches, while excluding personal large files and backups.",
+    "Geliştirici ve uygulama önbelleklerini seçer; kişisel dosyalara, yedeklere ve büyük dosyalara dokunmaz.": "Selects developer and application caches; leaves personal files, backups, and large files alone.",
+    "Shader, tarayıcı ve uygulama önbelleklerini seçer; oyun dosyalarına ve projelere dokunmaz.": "Selects shader, browser, and application caches; leaves game files and projects alone.",
+    "Tarayıcı ve uygulama önbelleklerini seçer; kişisel dosya ve yedekleri kapsam dışı bırakır.": "Selects safe browser and application caches only; excludes personal files and backups.",
+    "Hiçbir öğeyi otomatik seçmez; tam kontrol sende.": "Selects nothing automatically; you have full control.",
+    "Bu ayarlar tarama kapsamını ve ön seçimleri düzenler. Hiçbir ayar otomatik dosya silmez.": "These settings control scan scope and pre-selection. No setting enables automatic deletion.",
+    "Tarama sürüyor · ": "Scan in progress · ",
+    " öğe bulundu…": " items found…",
+    "Tarama tamamlandı · ": "Scan complete · ",
+    " · Hızlı tarama: büyük dosyalar atlandı": " · Fast scan: large files skipped",
+    "Tarama modu: ": "Scan mode: ",
+    " · sonraki taramada uygulanır": " · applies to the next scan",
+    "Tarama kapsamı değişti; sonuçlar yenileniyor…": "Scan scope changed; refreshing results…",
+    "Hariç tutulan yol: bu öğe silinmedi.": "Excluded path: this item was not deleted.",
+    "Geçersiz hariç tutma ayarı": "Invalid exclusion setting",
+    "Planlı tarama yalnızca uygulama açıkken çalışır ve hiçbir dosyayı otomatik silmez.": "Scheduled scans run only while the app is open and never delete files automatically.",
 }
 
 _EN_TO_TR = {value: key for key, value in EN.items()}
@@ -407,6 +449,9 @@ def _translate_dynamic_en(text: str) -> str:
     progress = re.fullmatch(r"Taranıyor: (.+) \((\d+)/(\d+)\)", text)
     if progress:
         return f"Scanning: {tr(progress.group(1))} ({progress.group(2)}/{progress.group(3)})"
+    scan_mode = re.fullmatch(r"Tarama modu: (.+) · sonraki taramada uygulanır", text)
+    if scan_mode:
+        return f"Scan mode: {tr(scan_mode.group(1))} · applies to the next scan"
     patterns: tuple[tuple[str, str], ...] = (
         (r"^(\d+) öğe seçildi · (.+)$", r"\1 items selected · \2"),
         (r"^(\d+) seçili · (\d+) / (\d+) paket gösteriliyor$", r"\1 selected · showing \2 of \3 packages"),
@@ -444,6 +489,13 @@ def _translate_dynamic_en(text: str) -> str:
         (r"^Gizliliği koruyan tanı raporu kaydedildi:\n(.+)$", r"Privacy-conscious support report saved to:\n\1"),
         (r"^Açık uygulamalar: (.+)\. Önbelleklerini temizlemeden önce kapat\.$", r"Open applications: \1. Close them before clearing their caches."),
         (r"^Tarama tamamlandı · (\d+) öğe bulundu$", r"Scan complete · \1 items found"),
+        (r"^Tarama sürüyor · (\d+) öğe bulundu…$", r"Scan in progress · \1 items found…"),
+        (r"^Tarama tamamlandı · (\d+) öğe · ([\d.,]+) sn · Hızlı tarama: büyük dosyalar atlandı$", r"Scan complete · \1 items · \2 s · Fast scan: large files skipped"),
+        (r"^Tarama tamamlandı · (\d+) öğe · ([\d.,]+) sn$", r"Scan complete · \1 items · \2 s"),
+        (r"^Tarama kapsamı değişti; sonuçlar yenileniyor…$", "Scan scope changed; refreshing results…"),
+        (r"^Hariç tutulan yol mutlak olmalı: (.+)$", r"Excluded path must be absolute: \1"),
+        (r"^Kök dizin hariç tutulamaz: (.+)$", r"The filesystem root cannot be excluded: \1"),
+        (r"^Hariç tutulan yol: bu öğe silinmedi\.$", "Excluded path: this item was not deleted."),
     )
     for pattern, replacement in patterns:
         translated, count = re.subn(pattern, replacement, text)
@@ -462,6 +514,9 @@ def _translate_dynamic_tr(text: str) -> str:
     progress = re.fullmatch(r"Scanning: (.+) \((\d+)/(\d+)\)", text)
     if progress:
         return f"Taranıyor: {tr(progress.group(1))} ({progress.group(2)}/{progress.group(3)})"
+    scan_mode = re.fullmatch(r"Scan mode: (.+) · applies to the next scan", text)
+    if scan_mode:
+        return f"Tarama modu: {tr(scan_mode.group(1))} · sonraki taramada uygulanır"
     patterns: tuple[tuple[str, str], ...] = (
         (r"^(\d+) items selected · (.+)$", r"\1 öğe seçildi · \2"),
         (r"^(\d+) selected · showing (\d+) of (\d+) packages$", r"\1 seçili · \2 / \3 paket gösteriliyor"),
@@ -488,6 +543,13 @@ def _translate_dynamic_tr(text: str) -> str:
         (r"^(\d+) startup apps? disabled until your next login$", r"\1 başlangıç uygulaması sonraki oturum için devre dışı"),
         (r"^(\d+) startup apps? restored$", r"\1 başlangıç uygulaması geri yüklendi"),
         (r"^([A-Z ]+)\s+·\s+(\d+) items\s+·\s+(.+)$", r"\1 · \2 öğe · \3"),
+        (r"^Scan in progress · (\d+) items found…$", r"Tarama sürüyor · \1 öğe bulundu…"),
+        (r"^Scan complete · (\d+) items · ([\d.,]+) s · Fast scan: large files skipped$", r"Tarama tamamlandı · \1 öğe · \2 sn · Hızlı tarama: büyük dosyalar atlandı"),
+        (r"^Scan complete · (\d+) items · ([\d.,]+) s$", r"Tarama tamamlandı · \1 öğe · \2 sn"),
+        (r"^Scan scope changed; refreshing results…$", r"Tarama kapsamı değişti; sonuçlar yenileniyor…"),
+        (r"^Excluded path must be absolute: (.+)$", r"Hariç tutulan yol mutlak olmalı: \1"),
+        (r"^The filesystem root cannot be excluded: (.+)$", r"Kök dizin hariç tutulamaz: \1"),
+        (r"^Excluded path: this item was not deleted\.$", r"Hariç tutulan yol: bu öğe silinmedi."),
     )
     for pattern, replacement in patterns:
         translated, count = re.subn(pattern, replacement, text)
@@ -498,6 +560,7 @@ def _translate_dynamic_tr(text: str) -> str:
 
 def translate_widget_tree(root: Any) -> None:
     """Translate visible Qt widget copy in-place, including dynamic tree rows."""
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (
         QAbstractButton,
         QComboBox,
@@ -522,6 +585,9 @@ def translate_widget_tree(root: Any) -> None:
         if isinstance(widget, QComboBox):
             for index in range(widget.count()):
                 widget.setItemText(index, tr(widget.itemText(index)))
+                tip = widget.itemData(index, Qt.ItemDataRole.ToolTipRole)
+                if tip:
+                    widget.setItemData(index, tr(tip), Qt.ItemDataRole.ToolTipRole)
         if isinstance(widget, (QLineEdit, QPlainTextEdit)):
             widget.setPlaceholderText(tr(widget.placeholderText()))
         if isinstance(widget, QWidget) and widget.toolTip():

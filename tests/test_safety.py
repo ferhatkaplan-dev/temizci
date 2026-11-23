@@ -184,6 +184,123 @@ class TemizciSafetyTests(unittest.TestCase):
         self.assertEqual(results[0]["status"], "deleted")
         self.assertFalse(Path(item.path).exists())
 
+    def test_clean_honors_excluded_paths(self) -> None:
+        item = self._item()
+        results = core.clean_items(
+            {item.id: item},
+            [item.id],
+            "delete",
+            excludes=[str(self.root / ".cache")],
+        )
+        self.assertEqual(results[0]["status"], "error")
+        self.assertTrue(Path(item.path).exists())
+
+    def test_exclude_validation_rejects_relative_and_root(self) -> None:
+        with self.assertRaises(ValueError):
+            core.normalize_excludes(["relative/path"])
+        with self.assertRaises(ValueError):
+            core.normalize_excludes(["/"])
+        allowed = self.root / "Projects"
+        allowed.mkdir()
+        self.assertEqual(core.normalize_excludes([str(allowed)]), (allowed,))
+
+    def test_scan_options_filter_categories_exclusions_and_fast_mode(self) -> None:
+        keep = self.root / ".cache" / "keep"
+        blocked = self.root / ".cache" / "blocked"
+        large = self.root / "Downloads" / "large.bin"
+        keep.mkdir(parents=True)
+        blocked.mkdir()
+        large.parent.mkdir()
+        large.write_bytes(b"x" * 16)
+
+        def keep_collector(cache):
+            return [core._make_item("keep", "keep", "", keep, 10, 1, "safe", "caches")]
+
+        def blocked_collector(cache):
+            return [core._make_item("blocked", "blocked", "", blocked, 10, 1, "safe", "caches")]
+
+        def files_collector(cache):
+            return [core._make_item("large", "large", "", large, 10, 1, "caution", "files", "trash")]
+
+        active_limits: list[int] = []
+
+        def limit_collector(cache):
+            active_limits.append(core._ACTIVE_LARGE_LIMIT.get())
+            return []
+
+        original = core.COLLECTORS
+        core.COLLECTORS = [
+            ("caches", "A", keep_collector),
+            ("caches", "B", blocked_collector),
+            ("files", "C", files_collector),
+            ("files", "limit", limit_collector),
+        ]
+        try:
+            partials: list[list[core.Item]] = []
+            stats: dict = {}
+            items = core.scan_all(
+                options=core.ScanOptions(
+                    categories=("caches",),
+                    excludes=(str(blocked),),
+                    workers=2,
+                ),
+                stats=stats,
+                on_partial=partials.append,
+            )
+            self.assertEqual([item.title for item in items], ["keep"])
+            self.assertEqual(stats["items"], 1)
+            self.assertEqual(stats["workers"], 2)
+            self.assertTrue(partials)
+
+            fast_items = core.scan_all(options=core.ScanOptions(mode="fast", workers=1))
+            self.assertEqual({item.title for item in fast_items}, {"keep", "blocked"})
+            thorough_stats: dict = {}
+            core.scan_all(options=core.ScanOptions(mode="thorough", workers=1), stats=thorough_stats)
+            self.assertIn(100, active_limits)
+            self.assertEqual(core._ACTIVE_LARGE_LIMIT.get(), 40)
+        finally:
+            core.COLLECTORS = original
+
+    def test_workflow_profiles_select_expected_items(self) -> None:
+        def make(ident: str, risk: str, category: str, running: bool = False) -> core.Item:
+            return core.Item(
+                id=ident,
+                rule_id="test",
+                title=ident,
+                detail="",
+                path=None,
+                size=1,
+                files=1,
+                risk=risk,
+                category=category,
+                action="delete",
+                meta={"running": running},
+            )
+
+        items = [
+            make("safe-cache", "safe", "caches"),
+            make("safe-browser", "safe", "browsers"),
+            make("caution-dev", "caution", "dev"),
+            make("caution-backup", "caution", "backups"),
+            make("running-cache", "safe", "caches", running=True),
+            make("risky-file", "risky", "files"),
+        ]
+        self.assertEqual(core.select_items(items, "recommended"), {"safe-cache", "safe-browser"})
+        self.assertEqual(
+            core.select_items(items, "deep"),
+            {"safe-cache", "safe-browser", "caution-dev", "caution-backup"},
+        )
+        self.assertEqual(
+            core.select_items(items, "developer"),
+            {"safe-cache", "safe-browser", "caution-dev"},
+        )
+        self.assertEqual(
+            core.select_items(items, "low-disk"),
+            {"safe-cache", "safe-browser", "caution-dev"},
+        )
+        self.assertEqual(core.select_items(items, "privacy"), {"safe-cache", "safe-browser"})
+        self.assertEqual(core.select_items(items, "manual"), set())
+
     # -- biçimlendirme ---------------------------------------------------
     def test_parse_size(self) -> None:
         self.assertEqual(core.parse_size("1.63 GiB"), int(1.63 * 1024**3))
@@ -251,9 +368,17 @@ Required By     : None
             self.assertEqual(i18n.tr("85% dolu"), "85% used")
             self.assertEqual(i18n.tr("3 seçili · 12 / 303 paket gösteriliyor"), "3 selected · showing 12 of 303 packages")
             self.assertEqual(i18n.tr("Artık paketler (5 adet)"), "Orphan packages (5)")
+            self.assertEqual(i18n.tr("Tarama tamamlandı · 3 öğe · 1.2 sn"), "Scan complete · 3 items · 1.2 s")
+            self.assertEqual(i18n.tr("Tarama sürüyor · 3 öğe bulundu…"), "Scan in progress · 3 items found…")
+            self.assertEqual(i18n.tr("Hariç tutulan yol mutlak olmalı: x"), "Excluded path must be absolute: x")
+            self.assertEqual(i18n.tr("Kök dizin hariç tutulamaz: /"), "The filesystem root cannot be excluded: /")
+            self.assertEqual(i18n.tr("Düşük disk alanı"), "Low disk space")
+            self.assertEqual(i18n.tr("Geliştirici"), "Developer")
             i18n.set_language("tr")
             self.assertEqual(i18n.tr("Apps & packages"), "Uygulamalar ve paketler")
             self.assertEqual(i18n.tr("85% used"), "85% dolu")
+            self.assertEqual(i18n.tr("Scan complete · 3 items · 1.2 s"), "Tarama tamamlandı · 3 öğe · 1.2 sn")
+            self.assertEqual(i18n.tr("Low disk space"), "Düşük disk alanı")
         finally:
             i18n.set_language(original)
 

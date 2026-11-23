@@ -67,13 +67,47 @@ GUI'deki iş akışları:
 
 * **Önerilen:** yalnızca güvenli ve kapalı uygulamaların öğelerini seçer.
 * **Derin inceleme:** güvenli ve dikkat öğelerini seçer; açık uygulamaları ve riskli yedekleri atlar.
+* **Düşük disk alanı:** güvenli/dikkat önbelleklerini seçer; kişisel büyük dosya ve yedekleri dışarıda bırakır.
+* **Geliştirici:** uygulama, tarayıcı ve geliştirici önbelleklerini seçer; kişisel dosya, yedek ve büyük dosyalara dokunmaz.
+* **Oyun ve grafik:** shader, tarayıcı ve uygulama önbelleklerini seçer; oyun dosyalarına ve projelere dokunmaz.
+* **Gizlilik:** tarayıcı ve uygulama önbelleklerini seçer; kişisel dosya ve yedekleri kapsam dışı bırakır.
 * **Manuel:** otomatik seçim yapmaz. Risk filtresi, arama ve boyuta göre sıralama kullanılabilir.
-* **Ayarlar:** varsayılan çöp kutusu/kalıcı sil tercihi, büyük dosya eşiği, başlangıç taraması ve aralıkla tarama.
+* **Ayarlar:** varsayılan çöp kutusu/kalıcı sil tercihi, tarama modu, paralel işçi sayısı, büyük dosya eşiği, kategori kapsamı, hariç tutulan yollar, başlangıç taraması ve aralıkla tarama.
 * **Dil:** Ayarlar → Dil bölümünden Türkçe veya English seç; değişiklik uygulamaya anında yansır ve kaydedilir.
 * **Geçmiş / Çöp kutusu:** önceki işlemleri gösterir veya XDG çöp klasörünü açar.
 * **Uygulamalar ve paketler:** Pacman envanterini, kurulu boyutları ve bağımlılık ilişkilerini gösterir. Kaldırma öncesi Pacman'ın `-Rsp --print-format` salt okunur planı incelenir; sonrasında komut terminalde açılır ve Pacman'ın kendi onayı da gerekir.
 * **Hız ve başlangıç:** RAM/swap, yük, açılışta en uzun süren systemd birimleri, TRIM ve güç profilini ölçer. Kullanıcı autostart girdileri silinmeden devre dışı bırakılıp geri yüklenebilir.
 * **Tanı raporu:** Topluluk desteği için dağıtım, disk/RAM ölçümleri ve araç durumlarını dışa aktarır. Kullanıcı adı, bilgisayar adı, ev dizini, disk kimliği, dosya yolu, paket adı, servis adı ve başlangıç komutları dahil edilmez; paylaşmadan önce raporu yine de inceleyin.
+
+### Performans ve gelişmiş tarama
+
+Temizci taramayı hızlandırmak için üç mod ve isteğe bağlı kapsam ayarları sunar:
+
+| Ayar | Ne yapar |
+|---|---|
+| **Dengeli** | Tüm kategorileri tarar; günlük kullanım için varsayılan. |
+| **Hızlı** | Büyük dosya keşfini atlar; ilk sonuçlar daha hızlı gelir. |
+| **Kapsamlı** | Varsayılan 40 yerine en fazla 100 büyük dosya sonucunu listeler. |
+| **Paralel işçi** | Bağımsız tarama adımlarını eşzamanlı çalıştırır. 2 önerilir; bazı disklerde daha yüksek değerler yavaşlatabilir. |
+| **Kategoriler** | Yalnızca seçilen kategorileri tarar (ör. sadece tarayıcı önbellekleri). |
+| **Hariç tutulan yollar** | Belirtilen dizinler ne taranır ne de temizlenir; ayar temizlik anında da doğrulanır. |
+
+Tarama sırasında ilk bulunan öğeler beklemeden listelenir, ilerleme çubuğu ve
+tamamlanma süresi gösterilir. Tarama hâlâ tek tek dosya silmez; hız ayarları
+yalnızca keşif kapsamını değiştirir.
+
+```bash
+temizci presets                              # iş akışı profillerini listele
+temizci scan --mode fast --workers 2         # hızlı tarama
+temizci scan --category browsers --stats     # yalnızca tarayıcılar + süre dağılımı
+temizci scan --exclude ~/Projects --json     # projeleri hariç tut
+temizci clean --preset developer             # yalnızca önizleme
+temizci clean --preset gaming --trash --yes  # seçili profili çöpe taşı
+```
+
+`--stats` süreleri ve en yavaş koleksiyoncuları `stderr`'e yazar; JSON çıktısını
+bozmaz. Hariç tutulan bir yol tarama sonrasında ayarlara eklense bile temizlik
+sırasında ikinci kez kontrol edilir ve silinmez.
 
 Aralıklı tarama yalnızca GUI açıkken çalışır ve **dosyaları otomatik silmez**.
 Temizleme için her zaman ayrı onay gerekir; riskli öğeler otomatik seçilmez.
@@ -100,11 +134,15 @@ temizci support-report     # gizliliği azaltılmış destek raporu (JSON)
 temizci support-report -o rapor.json
 temizci scan               # neler silinebilir, boyutlarıyla listele
 temizci scan --json        # makine okunabilir çıktı
+temizci scan --mode fast --workers 2 --stats
+temizci scan --category caches --exclude ~/Projects
+temizci presets            # iş akışı profilleri ve kapsamları
 
 temizci clean              # yalnızca önizleme (hiçbir şey silmez)
 temizci clean --yes        # güvenli öğeleri kalıcı sil
 temizci clean --trash --yes        # güvenlileri çöpe taşı
 temizci clean --include-risky      # risklileri de önizlemeye kat
+temizci clean --preset developer   # profil tabanlı önizleme
 temizci clean --ids "id1,id2" --yes
 ```
 
@@ -156,6 +194,7 @@ temizci
 │   ├── cli.py               # gui / scan / clean / doctor / ui
 │   └── web/                 # bağımlılıksız arayüz (HTML/CSS/JS)
 ├── tests/test_safety.py
+├── docs/PERFORMANCE.md       # tarama performansı ve ayarları
 ├── assets/temizci.svg
 ├── .github/workflows/test.yml
 └── install.sh

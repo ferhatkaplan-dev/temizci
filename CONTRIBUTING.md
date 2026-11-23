@@ -5,7 +5,7 @@ Thank you for helping make Linux maintenance safer and more approachable.
 ## Before opening an issue
 
 - Search existing issues first and describe one problem per issue.
-- Include your distro/version, desktop environment, Python version, Temizci version (e.g. 1.1.0),
+- Include your distro/version, desktop environment, Python version, Temizci version (e.g. 1.2.0),
   and exact reproduction steps.
 - Prefer the GUI's **Tanı raporu** button (or `temizci support-report`) and review
   the JSON before attaching it. Never post passwords, tokens, private paths, or

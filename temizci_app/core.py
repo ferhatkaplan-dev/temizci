@@ -12,6 +12,7 @@ Tasarım ilkeleri
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import os
@@ -25,10 +26,11 @@ import urllib.parse
 import configparser
 import platform
 import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 HOME = Path(os.environ.get("HOME") or str(Path.home())).resolve()
 TRASH_DIR = HOME / ".local" / "share" / "Trash"
@@ -48,6 +50,96 @@ ALLOWED_ROOTS: list[Path] = [
 ]
 
 RISK_ORDER = {"safe": 0, "caution": 1, "risky": 2}
+SCAN_MODES = ("fast", "balanced", "thorough")
+DEFAULT_SCAN_WORKERS = 2
+
+
+@dataclass(frozen=True)
+class ScanOptions:
+    """Kullanıcıya açık tarama kapsamı ve performans seçenekleri.
+
+    ``categories`` boşsa tüm kategoriler taranır. ``excludes`` içindeki yollar
+    ne taranır ne de temizlenebilir. ``workers`` yalnızca bağımsız
+    koleksiyoncuları paralelleştirir; hiçbir silme işlemi paralel yapılmaz.
+    """
+
+    mode: str = "balanced"
+    workers: int = DEFAULT_SCAN_WORKERS
+    categories: tuple[str, ...] = ()
+    excludes: tuple[str, ...] = ()
+    large_file_limit: int = 0
+
+
+@dataclass(frozen=True)
+class Workflow:
+    """Tarama sonrası ön seçim profili. Riskli öğeler hiçbir profilde seçilmez."""
+
+    key: str
+    title: str
+    description: str
+    risks: frozenset[str]
+    categories: frozenset[str] = frozenset()
+    include_running: bool = False
+
+
+WORKFLOWS: dict[str, Workflow] = {
+    "recommended": Workflow(
+        "recommended",
+        "Önerilen",
+        "Yalnızca güvenli öğeleri seçer; açık uygulamaların önbelleklerini ve riskli yedekleri atlar.",
+        frozenset({"safe"}),
+    ),
+    "deep": Workflow(
+        "deep",
+        "Derin inceleme",
+        "Güvenli ve dikkat öğelerini seçer; açık uygulamalar ile riskli yedekler yine atlanır.",
+        frozenset({"safe", "caution"}),
+    ),
+    "low-disk": Workflow(
+        "low-disk",
+        "Düşük disk alanı",
+        "Daha çok alan açmak için güvenli ve dikkat önbelleklerini seçer; kişisel büyük dosya ve yedekleri dışarıda bırakır.",
+        frozenset({"safe", "caution"}),
+        frozenset({"system", "caches", "browsers", "dev"}),
+    ),
+    "developer": Workflow(
+        "developer",
+        "Geliştirici",
+        "Geliştirici ve uygulama önbelleklerini seçer; kişisel dosyalara, yedeklere ve büyük dosyalara dokunmaz.",
+        frozenset({"safe", "caution"}),
+        frozenset({"caches", "browsers", "dev"}),
+    ),
+    "gaming": Workflow(
+        "gaming",
+        "Oyun ve grafik",
+        "Shader, tarayıcı ve uygulama önbelleklerini seçer; oyun dosyalarına ve projelere dokunmaz.",
+        frozenset({"safe", "caution"}),
+        frozenset({"caches", "browsers"}),
+    ),
+    "privacy": Workflow(
+        "privacy",
+        "Gizlilik",
+        "Tarayıcı ve uygulama önbelleklerini seçer; kişisel dosya ve yedekleri kapsam dışı bırakır.",
+        frozenset({"safe"}),
+        frozenset({"caches", "browsers"}),
+    ),
+    "manual": Workflow(
+        "manual",
+        "Manuel seçim",
+        "Hiçbir öğeyi otomatik seçmez; tam kontrol sende.",
+        frozenset(),
+    ),
+}
+
+# Bu bağlam değerleri koleksiyoncuların imzasını değiştirmeden tarama
+# seçeneklerini onlara ulaştırır. ThreadPoolExecutor görevleri kendi bağlam
+# kopyalarıyla çalıştığı için eşzamanlı taramalar birbirini etkilemez.
+_ACTIVE_EXCLUDES: contextvars.ContextVar[tuple[Path, ...]] = contextvars.ContextVar(
+    "temizci_excludes", default=()
+)
+_ACTIVE_LARGE_LIMIT: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "temizci_large_limit", default=40
+)
 
 # Paketiciden sistemin açılışını/temel yönetimini sağlayan öğeler GUI'de
 # kaldırılabilir hedef olarak sunulmaz. Pacman'ın kendi bağımlılık denetimi
@@ -177,6 +269,64 @@ class Item:
         d = asdict(self)
         d["risk_order"] = RISK_ORDER.get(self.risk, 9)
         return d
+
+
+def normalize_excludes(paths) -> tuple[Path, ...]:
+    """Hariç tutulan yolları doğrular ve tekilleştirir.
+
+    Göreli yollar ve dosya sisteminin kökü reddedilir; böylece yanlış bir
+    ayarın tüm taramayı sessizce devre dışı bırakması engellenir.
+    """
+    result: list[Path] = []
+    for raw in paths or ():
+        text = str(raw).strip()
+        if not text:
+            continue
+        candidate = Path(text).expanduser()
+        if not candidate.is_absolute():
+            raise ValueError(f"Hariç tutulan yol mutlak olmalı: {text}")
+        resolved = candidate.resolve(strict=False)
+        if resolved == Path(resolved.anchor):
+            raise ValueError(f"Kök dizin hariç tutulamaz: {text}")
+        result.append(resolved)
+    return tuple(dict.fromkeys(result))
+
+
+def path_is_excluded(path: str | Path, excludes: tuple[Path, ...]) -> bool:
+    if not excludes:
+        return False
+    raw = Path(path)
+    try:
+        resolved = raw.resolve(strict=False)
+    except OSError:
+        resolved = raw
+    # Hem yazıldığı yol hem de çözümlenmiş hedef kontrol edilir; böylece bir
+    # sembolik bağlantı üzerinden hariç tutulan yola girilemez.
+    return any(
+        candidate == excluded or excluded in candidate.parents
+        for candidate in (raw, resolved)
+        for excluded in excludes
+    )
+
+
+def is_excluded(path: str | Path) -> bool:
+    """Etkin taramada yolun hariç tutulup tutulmadığını döndürür."""
+    return path_is_excluded(path, _ACTIVE_EXCLUDES.get())
+
+
+def select_items(items: list[Item], workflow: str = "recommended") -> set[str]:
+    """Bir iş akışı profiline göre güvenli ön seçim kümesi üretir."""
+    profile = WORKFLOWS.get(workflow, WORKFLOWS["recommended"])
+    if not profile.risks:
+        return set()
+    return {
+        item.id
+        for item in items
+        if item.action == "delete"
+        and item.risk in profile.risks
+        and (not profile.categories or item.category in profile.categories)
+        and (profile.include_running or not item.meta.get("running"))
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +625,7 @@ def _make_item(
 def collect_pacman(cache: dict) -> list[Item]:
     items: list[Item] = []
     pkg_dir = Path("/var/cache/pacman/pkg")
-    if not pkg_dir.is_dir():
+    if not pkg_dir.is_dir() or is_excluded(pkg_dir):
         return items
     size, files, newest = walk_size(pkg_dir, cache)
     if size < 1:
@@ -825,7 +975,7 @@ def collect_user_caches(cache: dict) -> list[Item]:
         return items
 
     for entry in entries:
-        if entry.name in {"temizci"} or entry.is_symlink():
+        if entry.name in {"temizci"} or entry.is_symlink() or is_excluded(entry):
             continue
         try:
             if not entry.is_dir():
@@ -862,11 +1012,18 @@ def collect_user_caches(cache: dict) -> list[Item]:
 def collect_browser_caches(cache: dict) -> list[Item]:
     items: list[Item] = []
     config = HOME / ".config"
-    if not config.is_dir():
+    if not config.is_dir() or is_excluded(config):
         return items
 
+    def cache_dir(candidate: Path) -> bool:
+        return candidate.is_dir() and not candidate.is_symlink() and not is_excluded(candidate)
+
     try:
-        app_dirs = [p for p in config.iterdir() if p.is_dir() and not p.name.startswith(".")]
+        app_dirs = [
+            p
+            for p in config.iterdir()
+            if p.is_dir() and not p.name.startswith(".") and not is_excluded(p)
+        ]
     except OSError:
         return items
 
@@ -877,7 +1034,7 @@ def collect_browser_caches(cache: dict) -> list[Item]:
         # Uygulama kökündeki doğrudan önbellekler
         for name in BROWSER_CACHE_DIRS:
             candidate = app / name
-            if candidate.is_dir() and not candidate.is_symlink():
+            if cache_dir(candidate):
                 found.append(candidate)
 
         # Profil alt dizinleri (Default, Profile 1, Zen profilleri...)
@@ -890,7 +1047,7 @@ def collect_browser_caches(cache: dict) -> list[Item]:
                 continue
             for name in BROWSER_CACHE_DIRS:
                 candidate = profile / name
-                if candidate.is_dir() and not candidate.is_symlink():
+                if cache_dir(candidate):
                     found.append(candidate)
             # OpenChamber gibi gömülü tarayıcı bölümleri
             if profile.name in {"Partitions", "partitions"}:
@@ -901,7 +1058,7 @@ def collect_browser_caches(cache: dict) -> list[Item]:
                 for part in partitions:
                     for name in BROWSER_CACHE_DIRS:
                         candidate = part / name
-                        if candidate.is_dir() and not candidate.is_symlink():
+                        if cache_dir(candidate):
                             found.append(candidate)
 
         # Aynı yolu iki kez sayma
@@ -988,7 +1145,7 @@ def collect_dev(cache: dict) -> list[Item]:
         (HOME / ".cache" / "paru" / "clone", "paru AUR derleme önbelleği", "caution", "AUR depoları yeniden klonlanır."),
     ]
     for path, title, risk, detail in candidates:
-        if not path.is_dir() or path.is_symlink():
+        if not path.is_dir() or path.is_symlink() or is_excluded(path):
             continue
         size, files, newest = walk_size(path, cache)
         if size < 10 * 1024**2:
@@ -1010,13 +1167,13 @@ def collect_dev(cache: dict) -> list[Item]:
 
     # Projelerdeki node_modules klasörleri (yalnızca belirgin biçimde büyükse)
     projects = HOME / "Projects"
-    if projects.is_dir():
+    if projects.is_dir() and not is_excluded(projects):
         try:
             for project in projects.iterdir():
                 if not project.is_dir() or project.is_symlink():
                     continue
                 nm = project / "node_modules"
-                if not nm.is_dir() or nm.is_symlink():
+                if not nm.is_dir() or nm.is_symlink() or is_excluded(nm):
                     continue
                 size, files, newest = walk_size(nm, cache)
                 if size < 100 * 1024**2:
@@ -1046,7 +1203,7 @@ def collect_backups(cache: dict) -> list[Item]:
 
     def add(entry: Path, rule_id: str, title: str, detail: str, kind: str) -> None:
         key = str(entry)
-        if key in seen:
+        if key in seen or is_excluded(entry):
             return
         size, files, newest = walk_size(entry, cache)
         if size < 10 * 1024**2:
@@ -1069,7 +1226,7 @@ def collect_backups(cache: dict) -> list[Item]:
         )
 
     zen = HOME / ".config" / "zen"
-    if zen.is_dir():
+    if zen.is_dir() and not is_excluded(zen):
         try:
             entries = list(zen.iterdir())
         except OSError:
@@ -1088,7 +1245,7 @@ def collect_backups(cache: dict) -> list[Item]:
             )
 
     brain = HOME / ".brain-forest-backup_asd"
-    if brain.is_dir():
+    if brain.is_dir() and not is_excluded(brain):
         try:
             entries = [p for p in brain.iterdir() if p.is_file() and not p.is_symlink()]
         except OSError:
@@ -1148,7 +1305,7 @@ def _backup_label(name: str) -> str:
 def collect_tmp(cache: dict) -> list[Item]:
     items: list[Item] = []
     tmp = Path("/tmp")
-    if not tmp.is_dir():
+    if not tmp.is_dir() or is_excluded(tmp):
         return items
     now = time.time()
     cutoff = now - 7 * 24 * 3600
@@ -1160,6 +1317,8 @@ def collect_tmp(cache: dict) -> list[Item]:
     for entry in entries:
         name = entry.name
         if any(name.startswith(skip) for skip in SKIP_TMP_NAMES):
+            continue
+        if is_excluded(entry):
             continue
         try:
             st = entry.lstat()
@@ -1199,41 +1358,62 @@ PRUNE_DIRS = {"node_modules", ".git", ".cache", ".venv", "venv", "__pycache__", 
 
 def collect_large_files(cache: dict) -> list[Item]:
     found: list[tuple[int, Path, float]] = []
+    limit = max(1, int(_ACTIVE_LARGE_LIMIT.get()))
 
     def visit(root: Path) -> None:
-        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-            dirnames[:] = [
-                d
-                for d in dirnames
-                if d not in PRUNE_DIRS and not d.startswith(".") and not _is_backup_name(d)
-            ]
-            for filename in filenames:
-                path = Path(dirpath) / filename
-                try:
-                    st = path.lstat()
-                except OSError:
-                    continue
-                if stat.S_ISLNK(st.st_mode):
-                    continue
-                if st.st_size >= LARGE_FILE_MIN:
-                    found.append((st.st_size, path, st.st_mtime))
+        # os.scandir tabanlı yineleme: her dosya için ayrı Path/lstat yerine
+        # DirEntry önbelleğini kullanır ve gizli/üretim dizinlerini budar.
+        stack = [root]
+        while stack:
+            current = stack.pop()
+            try:
+                with os.scandir(current) as entries:
+                    for entry in entries:
+                        try:
+                            if entry.is_symlink():
+                                continue
+                            if entry.is_dir(follow_symlinks=False):
+                                if (
+                                    entry.name in PRUNE_DIRS
+                                    or entry.name.startswith(".")
+                                    or _is_backup_name(entry.name)
+                                    or is_excluded(entry.path)
+                                ):
+                                    continue
+                                stack.append(Path(entry.path))
+                                continue
+                            if not entry.is_file(follow_symlinks=False):
+                                continue
+                            est = entry.stat(follow_symlinks=False)
+                        except OSError:
+                            continue
+                        if est.st_size >= LARGE_FILE_MIN:
+                            found.append((est.st_size, Path(entry.path), est.st_mtime))
+            except OSError:
+                continue
 
     for name in LARGE_FILE_ROOTS:
         root = HOME / name
-        if root.is_dir():
+        if root.is_dir() and not is_excluded(root):
             visit(root)
-    try:
-        for entry in HOME.iterdir():
-            if entry.is_file() and not entry.is_symlink():
-                st = entry.lstat()
-                if st.st_size >= LARGE_FILE_MIN:
-                    found.append((st.st_size, entry, st.st_mtime))
-    except OSError:
-        pass
+    if not is_excluded(HOME):
+        try:
+            with os.scandir(HOME) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                            continue
+                        est = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if est.st_size >= LARGE_FILE_MIN:
+                        found.append((est.st_size, Path(entry.path), est.st_mtime))
+        except OSError:
+            pass
 
     found.sort(key=lambda x: x[0], reverse=True)
     items: list[Item] = []
-    for size, path, mtime in found[:LARGE_FILE_LIMIT]:
+    for size, path, mtime in found[:limit]:
         items.append(
             _make_item(
                 "large-file",
@@ -1254,7 +1434,7 @@ def collect_large_files(cache: dict) -> list[Item]:
 
 def collect_trash(cache: dict) -> list[Item]:
     files_dir = TRASH_DIR / "files"
-    if not files_dir.is_dir():
+    if not files_dir.is_dir() or is_excluded(files_dir):
         return []
     size, files, newest = walk_size(files_dir, cache)
     if size < 1024**2:
@@ -1276,16 +1456,16 @@ def collect_trash(cache: dict) -> list[Item]:
 
 
 COLLECTORS = [
-    ("Sistem paketleri", collect_pacman),
-    ("Sistem günlükleri", collect_journal),
-    ("Artık paketler", collect_orphans),
-    ("Uygulama önbellekleri", collect_user_caches),
-    ("Tarayıcı önbellekleri", collect_browser_caches),
-    ("Geliştirici araçları", collect_dev),
-    ("Eski yedekler", collect_backups),
-    ("Geçici dosyalar", collect_tmp),
-    ("Büyük dosyalar", collect_large_files),
-    ("Çöp kutusu", collect_trash),
+    ("system", "Sistem paketleri", collect_pacman),
+    ("system", "Sistem günlükleri", collect_journal),
+    ("system", "Artık paketler", collect_orphans),
+    ("caches", "Uygulama önbellekleri", collect_user_caches),
+    ("browsers", "Tarayıcı önbellekleri", collect_browser_caches),
+    ("dev", "Geliştirici araçları", collect_dev),
+    ("backups", "Eski yedekler", collect_backups),
+    ("system", "Geçici dosyalar", collect_tmp),
+    ("files", "Büyük dosyalar", collect_large_files),
+    ("trash", "Çöp kutusu", collect_trash),
 ]
 
 
@@ -1315,20 +1495,124 @@ def disk_info() -> dict:
         return {"total": 0, "used": 0, "free": 0, "percent": 0, "mount": str(HOME)}
 
 
-def scan_all(progress=None) -> list[Item]:
-    """Tüm kuralları çalıştırır. progress(done, total, label) geri çağrısı desteklenir."""
+def scan_all(
+    progress=None,
+    options: ScanOptions | None = None,
+    stats: dict | None = None,
+    on_partial=None,
+) -> list[Item]:
+    """Tüm kuralları çalıştırır.
+
+    Bağımsız koleksiyoncular ``options.workers`` kadar iş parçacığında paralel
+    çalışır; ilerleme ve kısmi sonuç geri çağrıları ana iş parçacığından
+    yapılır. ``on_partial`` ilk sonuçların erken gösterilmesini sağlar.
+    ``stats`` verilirse süre ve koleksiyoncu dağılımı bu sözlüğe yazılır.
+    """
+    options = options or ScanOptions()
+    mode = options.mode if options.mode in SCAN_MODES else "balanced"
+    excludes = normalize_excludes(options.excludes)
+    categories = tuple(dict.fromkeys(c for c in options.categories if c))
+    workers = max(1, min(int(options.workers or DEFAULT_SCAN_WORKERS), 8))
+    large_limit = max(
+        1,
+        int(options.large_file_limit or (100 if mode == "thorough" else LARGE_FILE_LIMIT)),
+    )
+
+    selected = [
+        (category, label, collector)
+        for category, label, collector in COLLECTORS
+        if (not categories or category in categories)
+        and not (mode == "fast" and category == "files")
+    ]
+
     cache: dict[str, tuple[int, int, float]] = {}
-    items: list[Item] = []
-    total = len(COLLECTORS)
-    for index, (label, collector) in enumerate(COLLECTORS, start=1):
-        if progress:
-            progress(index - 1, total, label)
+    collected: list[tuple[str, list[Item], float]] = []
+    total = len(selected)
+    started = time.monotonic()
+
+    def emit_partial() -> None:
+        if on_partial is None or not collected:
+            return
+        partial = [item for _label, group, _duration in collected for item in group]
+        if excludes:
+            partial = [
+                item
+                for item in partial
+                if not any(path_is_excluded(path, excludes) for path in item.paths)
+            ]
+        partial.sort(
+            key=lambda i: (
+                CATEGORIES.get(i.category, {}).get("order", 99),
+                RISK_ORDER.get(i.risk, 9),
+                -i.size,
+            )
+        )
+        on_partial(partial)
+
+    def execute_collector(collector):
+        collector_started = time.monotonic()
         try:
-            items.extend(collector(cache))
+            items = collector(cache)
         except Exception:  # tek kural patlarsa tarama devam etsin
-            continue
-        if progress:
-            progress(index, total, label)
+            items = []
+        return items, time.monotonic() - collector_started
+
+    if progress and selected:
+        progress(0, total, selected[0][1])
+
+    excludes_token = _ACTIVE_EXCLUDES.set(excludes)
+    limit_token = _ACTIVE_LARGE_LIMIT.set(large_limit)
+    try:
+        if total == 0:
+            pass
+        elif workers == 1:
+            for index, (_category, label, collector) in enumerate(selected):
+                if progress:
+                    progress(index, total, label)
+                collector_started = time.monotonic()
+                try:
+                    items = collector(cache)
+                except Exception:  # tek kural patlarsa tarama devam etsin
+                    items = []
+                collected.append((label, items, time.monotonic() - collector_started))
+                emit_partial()
+                if progress:
+                    progress(index + 1, total, label)
+        else:
+            completed = 0
+            with ThreadPoolExecutor(max_workers=min(workers, total)) as executor:
+                futures = {}
+                for _category, label, collector in selected:
+                    # Bağlam kopyası, hariç tutma ve büyük dosya limitini
+                    # çalışan iş parçacığına taşır.
+                    context = contextvars.copy_context()
+                    futures[executor.submit(context.run, execute_collector, collector)] = label
+                for future in as_completed(futures):
+                    label = futures[future]
+                    try:
+                        items, duration = future.result()
+                    except Exception:  # tek kural patlarsa tarama devam etsin
+                        items = []
+                        duration = 0.0
+                    collected.append((label, items, duration))
+                    emit_partial()
+                    completed += 1
+                    if progress:
+                        progress(completed, total, label)
+    finally:
+        _ACTIVE_LARGE_LIMIT.reset(limit_token)
+        _ACTIVE_EXCLUDES.reset(excludes_token)
+
+    items = [item for _label, group, _duration in collected for item in group]
+
+    # Hariç tutulan bir yol, bir koleksiyoncu tarafından üretilmiş olsa bile
+    # sonuç listesine giremez.
+    if excludes:
+        items = [
+            item
+            for item in items
+            if not any(path_is_excluded(path, excludes) for path in item.paths)
+        ]
 
     # Aynı yolu kapsayan öğeleri ayıkla (ör. üst klasör + alt klasör).
     # Komut/çöp öğeleri fiziksel yol tüketmediği için bu elemeden muaftır.
@@ -1346,6 +1630,22 @@ def scan_all(progress=None) -> list[Item]:
         covered.extend(paths)
 
     kept.sort(key=lambda i: (CATEGORIES.get(i.category, {}).get("order", 99), RISK_ORDER.get(i.risk, 9), -i.size))
+
+    if stats is not None:
+        stats.clear()
+        stats.update(
+            {
+                "mode": mode,
+                "workers": workers,
+                "categories": list(categories) or ["all"],
+                "items": len(kept),
+                "elapsed": round(time.monotonic() - started, 3),
+                "collectors": {
+                    label: round(duration, 3)
+                    for label, _items, duration in sorted(collected, key=lambda row: row[2], reverse=True)
+                },
+            }
+        )
     return kept
 
 
@@ -1354,15 +1654,37 @@ def scan_all(progress=None) -> list[Item]:
 # ---------------------------------------------------------------------------
 
 
-def clean_items(items_by_id: dict[str, Item], ids: list[str], mode: str = "delete") -> list[dict]:
-    """Seçilen öğeleri temizler. Sonuç listesi döndürür."""
+def clean_items(
+    items_by_id: dict[str, Item],
+    ids: list[str],
+    mode: str = "delete",
+    excludes=None,
+) -> list[dict]:
+    """Seçilen öğeleri temizler. Sonuç listesi döndürür.
+
+    ``excludes`` verilirse bu yolların altındaki hiçbir öğe, tarama
+    sonrasında ayarlar değişmiş olsa bile silinmez.
+    """
     if mode not in {"delete", "trash"}:
         raise ValueError("Geçersiz mod")
+    blocked = normalize_excludes(excludes or ())
     results: list[dict] = []
     for ident in ids:
         item = items_by_id.get(ident)
         if item is None:
             results.append({"id": ident, "title": ident, "status": "error", "error": "Öğe bulunamadı", "freed": 0})
+            continue
+
+        if blocked and any(path_is_excluded(path, blocked) for path in item.paths):
+            results.append(
+                {
+                    "id": item.id,
+                    "title": item.title,
+                    "status": "error",
+                    "freed": 0,
+                    "error": "Hariç tutulan yol: bu öğe silinmedi.",
+                }
+            )
             continue
 
         if item.action == "command":
@@ -1379,6 +1701,17 @@ def clean_items(items_by_id: dict[str, Item], ids: list[str], mode: str = "delet
             continue
 
         if item.action == "empty_trash":
+            if blocked and path_is_excluded(TRASH_DIR / "files", blocked):
+                results.append(
+                    {
+                        "id": item.id,
+                        "title": item.title,
+                        "status": "error",
+                        "freed": 0,
+                        "error": "Hariç tutulan yol: bu öğe silinmedi.",
+                    }
+                )
+                continue
             if mode == "trash":
                 results.append(
                     {
