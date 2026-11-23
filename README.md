@@ -76,7 +76,7 @@ GUI'deki iş akışları:
 * **Dil:** Ayarlar → Dil bölümünden Türkçe veya English seç; değişiklik uygulamaya anında yansır ve kaydedilir.
 * **Geçmiş / Çöp kutusu:** önceki işlemleri gösterir veya XDG çöp klasörünü açar.
 * **Uygulamalar ve paketler:** Pacman envanterini, kurulu boyutları ve bağımlılık ilişkilerini gösterir. Kaldırma öncesi Pacman'ın `-Rsp --print-format` salt okunur planı incelenir; sonrasında komut terminalde açılır ve Pacman'ın kendi onayı da gerekir.
-* **Hız ve başlangıç:** RAM/swap, yük, açılışta en uzun süren systemd birimleri, TRIM ve güç profilini ölçer. Kullanıcı autostart girdileri silinmeden devre dışı bırakılıp geri yüklenebilir.
+* **Hız ve başlangıç:** RAM/swap, yük, açılışta en uzun süren systemd birimleri, TRIM ve güç profilini ölçer. Dengeli / Performans / Pil tasarrufu güç iş akışını açık onayla uygular ve önceki profile dönmeyi sunar. Kullanıcı autostart girdileri silinmeden devre dışı bırakılıp geri yüklenebilir.
 * **Tanı raporu:** Topluluk desteği için dağıtım, disk/RAM ölçümleri ve araç durumlarını dışa aktarır. Kullanıcı adı, bilgisayar adı, ev dizini, disk kimliği, dosya yolu, paket adı, servis adı ve başlangıç komutları dahil edilmez; paylaşmadan önce raporu yine de inceleyin.
 
 ### Performans ve gelişmiş tarama
@@ -114,6 +114,26 @@ Temizleme için her zaman ayrı onay gerekir; riskli öğeler otomatik seçilmez
 Paket listesi hiçbir paketin “kullanılmıyor” olduğunu varsaymaz; 5 artık bağımlılık
 gibi Pacman'ın işaretlediği adaylar da otomatik kaldırılmaz. Sistem servisleri
 yalnızca raporlanır; ağ, Bluetooth ve masaüstü servisleri kendiliğinden kapatılmaz.
+
+### Bilgisayar performansı için güvenli iş akışları
+
+**Hız ve başlangıç** sekmesi ölçümlere göre üç güç profilini sunar:
+
+* **Dengeli:** günlük kullanım için önerilen tepki ve enerji dengesi.
+* **Performans:** ağır işlerde işlemci tepkisini artırabilir; daha çok güç, ısı ve fan sesi oluşturabilir. Pilde varsayılan olarak önerilmez.
+* **Pil tasarrufu:** tüketimi, ısıyı ve fan sesini azaltabilir; yoğun işlerde daha yavaş olabilir.
+
+Profil değişimi sistemin desteklediği seçeneklerle sınırlıdır, açık onay ister
+ve önceki profil için **geri dön** seçeneği saklar. `powerprofilesctl` kullanıcı
+oturumunda çalışır; Temizci sudo çalıştırmaz. Masaüstü yetkilendirme ilkesi ayrıca
+izin sorabilir. Güç profilleri işlemciyi her koşulda hızlandırma garantisi vermez;
+gerçek etki donanıma ve iş yüküne bağlıdır.
+
+Başlangıç uygulamaları kullanıcı tarafından tek tek seçilir ve geri alınabilir
+şekilde devre dışı bırakılır. Sistem servisleri otomatik kapatılmaz. SSD TRIM
+zamanlayıcısı yalnızca destekli disklerde sunulur; bu depolama bakımıdır, işlemci
+hızlandırma ayarı değildir. Depolama doluluğunu azaltmak güncelleme ve uygulama
+alanı sağlayabilir ancak RAM/CPU darboğazını çözmez.
 
 ### İsteğe bağlı web arayüzü
 

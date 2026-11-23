@@ -420,6 +420,29 @@ EN: dict[str, str] = {
     "Hariç tutulan yol: bu öğe silinmedi.": "Excluded path: this item was not deleted.",
     "Geçersiz hariç tutma ayarı": "Invalid exclusion setting",
     "Planlı tarama yalnızca uygulama açıkken çalışır ve hiçbir dosyayı otomatik silmez.": "Scheduled scans run only while the app is open and never delete files automatically.",
+    "Dengeli · günlük kullanım": "Balanced · everyday use",
+    "Performans · daha yüksek tepki": "Performance · higher responsiveness",
+    "Pil tasarrufu · daha serin ve sessiz": "Power saver · cooler and quieter",
+    "Güç iş akışını uygula…": "Apply power workflow…",
+    "Önceki profile dön": "Restore previous profile",
+    "Güç profili değiştir": "Change power profile",
+    "Güç profili uygulanıyor…": "Applying power profile…",
+    "Önceki güç profiline dön": "Restore previous power profile",
+    "Güç profili değiştirilemedi": "Could not change power profile",
+    "SSD TRIM zamanlayıcısını etkinleştir…": "Enable SSD TRIM timer…",
+    "TRIM SSD/NVMe depolama bakımıdır; işlemciyi hızlandırmaz.": "TRIM is SSD/NVMe storage maintenance; it does not speed up the processor.",
+    "Bu donanımda güç profili ayarı desteklenmiyor.": "Power profile control is not supported on this hardware.",
+    "Profili değiştirmek açık uygulamaları veya sistem servislerini kapatmaz.": "Changing a profile does not close applications or disable system services.",
+    "Güç profili denetleyicisi bu sistemde kullanılamıyor; daemon veya donanım desteği olmayabilir.": "Power profile control is unavailable; the daemon or hardware may not support it.",
+    "Ölçümler salt okunurdur. Güç profilini açık onayla değiştirebilir ve geri alabilirsin; başlangıç uygulamaları geri alınabilir biçimde yönetilir. Sistem servisleri kapatılmaz.": "Diagnostics are read-only. You can change and restore the power profile with confirmation; startup apps are managed reversibly. System services are never disabled.",
+    "Günlük kullanım için dengeli tepki ve enerji tüketimi. Donanımın varsayılan önerisidir.": "Balanced responsiveness and power use for everyday work. Recommended as the default.",
+    "Daha yüksek işlemci tepkisi sağlayabilir; güç tüketimi, sıcaklık ve fan sesi artabilir. Dizüstünde pilde kullanırken dikkat et.": "May increase CPU responsiveness, power use, temperature, and fan noise. Use cautiously on battery-powered laptops.",
+    "Güç tüketimini, sıcaklığı ve fan sesini azaltabilir; yoğun işlerde işlemci tepkisi düşebilir.": "May reduce power use, temperature, and fan noise; demanding workloads may respond more slowly.",
+    "Dengeli profil günlük kullanım için iyi varsayılandır. Performans profilini yalnızca ihtiyaç duyduğun ağır işlerde; Pil tasarrufunu pilde veya sessizlik istediğinde seç.": "Balanced is a sensible everyday default. Choose Performance for demanding work when needed; use Power saver on battery or when quieter operation matters.",
+    "Performans profili etkin. Daha çok güç ve ısı üretebilir; en yüksek tepkiye gerek olmadığında Dengeli veya Pil tasarrufu profiline dön.": "Performance mode is active. It can use more power and create more heat; switch to Balanced or Power saver when you do not need maximum responsiveness.",
+    "Ağır işlerde tepkiyi artırabilir; güç tüketimini, sıcaklığı ve fan sesini yükseltebilir.": "May improve responsiveness for demanding workloads, but increases power use, heat, and fan noise.",
+    "Güç tüketimini, sıcaklığı ve fan sesini azaltabilir; yoğun işler yavaşlayabilir.": "May reduce power use, heat, and fan noise; demanding workloads may run slower.",
+    "Bilgisayarı günlük kullanım için dengeli güç ayarına getirir.": "Returns the machine to a balanced everyday setting.",
 }
 
 _EN_TO_TR = {value: key for key, value in EN.items()}
@@ -452,6 +475,10 @@ def _translate_dynamic_en(text: str) -> str:
     scan_mode = re.fullmatch(r"Tarama modu: (.+) · sonraki taramada uygulanır", text)
     if scan_mode:
         return f"Scan mode: {tr(scan_mode.group(1))} · applies to the next scan"
+    power_status = re.fullmatch(r"(Güç profili etkin|Önceki güç profiline dönüldü): (.+)", text)
+    if power_status:
+        action = "Power profile active" if power_status.group(1) == "Güç profili etkin" else "Restored previous power profile"
+        return f"{action}: {power_status.group(2)}"
     patterns: tuple[tuple[str, str], ...] = (
         (r"^(\d+) öğe seçildi · (.+)$", r"\1 items selected · \2"),
         (r"^(\d+) seçili · (\d+) / (\d+) paket gösteriliyor$", r"\1 selected · showing \2 of \3 packages"),
@@ -496,6 +523,7 @@ def _translate_dynamic_en(text: str) -> str:
         (r"^Hariç tutulan yol mutlak olmalı: (.+)$", r"Excluded path must be absolute: \1"),
         (r"^Kök dizin hariç tutulamaz: (.+)$", r"The filesystem root cannot be excluded: \1"),
         (r"^Hariç tutulan yol: bu öğe silinmedi\.$", "Excluded path: this item was not deleted."),
+        (r"^Önceki güç profili \(([^)]+)\) geri yüklenecek\. Devam edilsin\?$", r"The previous power profile (\1) will be restored. Continue?"),
     )
     for pattern, replacement in patterns:
         translated, count = re.subn(pattern, replacement, text)
@@ -517,6 +545,10 @@ def _translate_dynamic_tr(text: str) -> str:
     scan_mode = re.fullmatch(r"Scan mode: (.+) · applies to the next scan", text)
     if scan_mode:
         return f"Tarama modu: {tr(scan_mode.group(1))} · sonraki taramada uygulanır"
+    power_status = re.fullmatch(r"(Power profile active|Restored previous power profile): (.+)", text)
+    if power_status:
+        action = "Güç profili etkin" if power_status.group(1) == "Power profile active" else "Önceki güç profiline dönüldü"
+        return f"{action}: {power_status.group(2)}"
     patterns: tuple[tuple[str, str], ...] = (
         (r"^(\d+) items selected · (.+)$", r"\1 öğe seçildi · \2"),
         (r"^(\d+) selected · showing (\d+) of (\d+) packages$", r"\1 seçili · \2 / \3 paket gösteriliyor"),
@@ -550,6 +582,7 @@ def _translate_dynamic_tr(text: str) -> str:
         (r"^Excluded path must be absolute: (.+)$", r"Hariç tutulan yol mutlak olmalı: \1"),
         (r"^The filesystem root cannot be excluded: (.+)$", r"Kök dizin hariç tutulamaz: \1"),
         (r"^Excluded path: this item was not deleted\.$", r"Hariç tutulan yol: bu öğe silinmedi."),
+        (r"^The previous power profile \(([^)]+)\) will be restored\. Continue\?$", r"Önceki güç profili (\1) geri yüklenecek. Devam edilsin mi?"),
     )
     for pattern, replacement in patterns:
         translated, count = re.subn(pattern, replacement, text)

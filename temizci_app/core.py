@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-VERSION = "1.2.1"
+VERSION = "1.3.0"
 
 HOME = Path(os.environ.get("HOME") or str(Path.home())).resolve()
 TRASH_DIR = HOME / ".local" / "share" / "Trash"
@@ -1870,6 +1870,8 @@ def performance_report() -> dict:
             enabled_units.append(parts[0])
 
     _, profile, _ = _run(["powerprofilesctl", "get"], timeout=8)
+    _, profiles_out, _ = _run(["powerprofilesctl", "list"], timeout=8)
+    available_power_profiles = parse_power_profiles(profiles_out)
     _, governor_out, _ = _run(["cpupower", "frequency-info", "-p"], timeout=8)
     gov_match = re.search(r"The governor \"([^\"]+)\"", governor_out)
     _, trim_enabled, _ = _run(["systemctl", "is-enabled", "fstrim.timer"], timeout=8)
@@ -1901,6 +1903,7 @@ def performance_report() -> dict:
         "boot_blame": [line.strip() for line in blame_out.splitlines() if line.strip()][:12],
         "enabled_units": enabled_units,
         "power_profile": profile.strip() or "bilinmiyor",
+        "available_power_profiles": available_power_profiles,
         "cpu_governor": gov_match.group(1) if gov_match else "bilinmiyor",
         "trim_enabled": trim_enabled.strip(),
         "trim_active": trim_active.strip(),
@@ -1910,6 +1913,43 @@ def performance_report() -> dict:
         "discard_devices": discard_lines[:12],
         "autostart": list_user_autostart(),
     }
+
+
+def parse_power_profiles(output: str) -> list[str]:
+    """Extract profile IDs from ``powerprofilesctl list`` output."""
+    profiles: list[str] = []
+    for line in output.splitlines():
+        match = re.match(r"^\s*\*?\s*([a-z][a-z0-9-]*):\s*$", line)
+        if match and match.group(1) not in profiles:
+            profiles.append(match.group(1))
+    return profiles
+
+
+def set_power_profile(profile: str) -> dict[str, str]:
+    """Apply one available power-profiles-daemon profile without sudo."""
+    allowed = {"balanced", "performance", "power-saver"}
+    if profile not in allowed:
+        raise ValueError("Desteklenmeyen güç profili")
+    if not shutil.which("powerprofilesctl"):
+        raise RuntimeError("powerprofilesctl kurulu değil")
+    code, profiles_out, error = _run(["powerprofilesctl", "list"], timeout=8)
+    if code != 0:
+        raise RuntimeError(error.strip() or "Güç profilleri okunamadı")
+    available = parse_power_profiles(profiles_out)
+    if profile not in available:
+        raise ValueError(f"Bu donanımda '{profile}' güç profili kullanılamıyor")
+    current_code, current_out, current_error = _run(["powerprofilesctl", "get"], timeout=8)
+    previous = current_out.strip()
+    if current_code != 0 or previous not in available:
+        raise RuntimeError(current_error.strip() or "Etkin güç profili okunamadı; değişiklik yapılmadı")
+    code, _out, error = _run(["powerprofilesctl", "set", profile], timeout=15)
+    if code != 0:
+        raise RuntimeError(error.strip() or "Güç profili değiştirilemedi")
+    _code, active_out, _error = _run(["powerprofilesctl", "get"], timeout=8)
+    active = active_out.strip() or profile
+    if active != profile:
+        raise RuntimeError(f"İstenen profil etkinleşmedi (etkin: {active})")
+    return {"previous": previous, "active": active}
 
 
 def community_support_report() -> dict:

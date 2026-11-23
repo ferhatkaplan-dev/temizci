@@ -32,6 +32,9 @@ files, removes packages, or disables system services.
   manual) pre-select items within clear category/risk boundaries and never
   auto-select risky items.
 - Partial results appear while scanning, with a progress bar and elapsed time.
+- The **Performance & startup** page offers confirmed Balanced, Performance, and
+  Power saver profiles when supported by the hardware, and can restore the prior
+  profile. Startup entries remain individually selectable and reversible.
 
 ## Install and run
 
@@ -101,6 +104,11 @@ a scan cannot be removed by a stale selection.
   terminal for the user to inspect and confirm.
 - Performance recommendations are based on observed system signals; disabling
   services is intentionally not automated.
+- Power-profile changes require an explicit confirmation, use the user's
+  power-profiles-daemon session interface (no sudo), and offer a restore action.
+  System policy may still show a desktop authorization prompt.
+  Performance mode may increase heat, fan noise, and battery use; it is not a
+  guaranteed speed boost. SSD TRIM is storage maintenance, not CPU tuning.
 
 ## Development
 

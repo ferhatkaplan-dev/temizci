@@ -210,6 +210,21 @@ class PerformanceWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class PowerProfileWorker(QThread):
+    applied = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, profile: str):
+        super().__init__()
+        self.profile = profile
+
+    def run(self) -> None:
+        try:
+            self.applied.emit(core.set_power_profile(self.profile))
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
+
+
 class PackagePreviewDialog(QDialog):
     def __init__(self, plan: dict, parent: QWidget | None = None):
         super().__init__(parent)
@@ -683,11 +698,15 @@ class MainWindow(QMainWindow):
         self.worker: ScanWorker | CleanWorker | None = None
         self.package_worker: PackageWorker | PackagePreviewWorker | None = None
         self.performance_worker: PerformanceWorker | None = None
+        self.power_profile_worker: PowerProfileWorker | None = None
         self.package_items: list[dict] = []
         self.packages_loaded = False
         self.performance_loaded = False
         self._scan_started: float | None = None
         self._updating_scan_mode = False
+        self._active_power_profile = ""
+        self._available_power_profiles: set[str] = set()
+        self._restoring_power_profile = False
         self.has_snapshots = False
         self.scan_after_clean = False
         self._updating_profile = False
@@ -969,8 +988,8 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
         intro = QHBoxLayout()
         explanation = QLabel(
-            "Ölçümler salt okunurdur. Başlangıç uygulamalarını geçici olarak devre dışı bırakabilirsin; "
-            "sistem servisleri yalnızca raporlanır, kendiliğimizden kapatmayız."
+            "Ölçümler salt okunurdur. Güç profilini açık onayla değiştirebilir ve geri alabilirsin; "
+            "başlangıç uygulamaları geri alınabilir biçimde yönetilir. Sistem servisleri kapatılmaz."
         )
         explanation.setWordWrap(True)
         explanation.setObjectName("muted")
@@ -993,14 +1012,35 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.performance_recommendations)
 
         self.performance_actions = QHBoxLayout()
-        self.power_profile_button = QPushButton("Performans güç profiline geç…")
-        self.power_profile_button.clicked.connect(self.set_performance_profile)
+        self.power_profile_combo = QComboBox()
+        self.power_profile_combo.addItem("Dengeli · günlük kullanım", "balanced")
+        self.power_profile_combo.addItem("Performans · daha yüksek tepki", "performance")
+        self.power_profile_combo.addItem("Pil tasarrufu · daha serin ve sessiz", "power-saver")
+        self.power_profile_combo.setEnabled(False)
+        self.power_profile_combo.currentIndexChanged.connect(self._power_profile_description_changed)
+        self.performance_actions.addWidget(self.power_profile_combo)
+        self.apply_power_profile_button = QPushButton("Güç iş akışını uygula…")
+        self.apply_power_profile_button.clicked.connect(self.set_performance_profile)
+        self.apply_power_profile_button.setEnabled(False)
+        self.performance_actions.addWidget(self.apply_power_profile_button)
+        self.restore_power_profile_button = QPushButton("Önceki profile dön")
+        self.restore_power_profile_button.clicked.connect(self.restore_power_profile)
+        self.restore_power_profile_button.setEnabled(False)
+        self.performance_actions.addWidget(self.restore_power_profile_button)
         self.trim_button = QPushButton("SSD TRIM zamanlayıcısını etkinleştir…")
         self.trim_button.clicked.connect(self.enable_trim)
-        self.performance_actions.addWidget(self.power_profile_button)
         self.performance_actions.addWidget(self.trim_button)
         self.performance_actions.addStretch()
         layout.addLayout(self.performance_actions)
+
+        self.power_profile_description = QLabel("")
+        self.power_profile_description.setWordWrap(True)
+        self.power_profile_description.setObjectName("dim")
+        layout.addWidget(self.power_profile_description)
+        trim_note = QLabel("TRIM, SSD/NVMe depolama bakımıdır; işlemciyi hızlandırmaz.")
+        trim_note.setWordWrap(True)
+        trim_note.setObjectName("dim")
+        layout.addWidget(trim_note)
 
         lower = QHBoxLayout()
         boot_frame = QFrame()
@@ -1308,14 +1348,63 @@ class MainWindow(QMainWindow):
             recommendations.append("• Swap usage is high. This is not automatically a problem; consider it alongside memory pressure and active workloads." if english else "• Swap kullanımı yüksek. Bu tek başına sorun değildir; RAM doluluğu ve ağır uygulamalarla birlikte değerlendir.")
         if report["root_is_ssd"] and report["trim_supported"] and report["trim_enabled"] != "enabled":
             recommendations.append("• The system disk supports SSD/NVMe discard, but the fstrim timer is disabled. You can enable it below." if english else "• Sistem SSD/NVMe üzerinde ve discard destekli; fstrim zamanlayıcısı etkin değil. İstersen aşağıdaki düğmeden etkinleştir.")
-        if report["power_profile"] != "performance" and shutil.which("powerprofilesctl"):
-            recommendations.append("• The current power profile is not performance. Switching may improve responsiveness but can increase heat, fan noise, and battery use." if english else "• Güç profili performans değil. İstersen daha yüksek tepki için performans profiline geç; pil tüketimi ve fan sesi artabilir.")
+        profiles = set(report.get("available_power_profiles", []))
+        if not profiles:
+            recommendations.append(
+                "• Power-profile switching is unavailable (the daemon may be missing or the hardware may not expose profiles)."
+                if english
+                else "• Güç profili değiştirme kullanılamıyor; daemon kurulu olmayabilir veya donanım profilleri sunmuyor olabilir."
+            )
+        elif "performance" in profiles and report["power_profile"] == "performance":
+            recommendations.append(
+                "• Performance mode is active. It can use more power and create more heat; switch back to Balanced or Power saver when you do not need maximum responsiveness."
+                if english
+                else "• Performans profili etkin. Daha çok güç ve ısı üretebilir; en yüksek tepkiye gerek olmadığında Dengeli veya Pil tasarrufu profiline dön."
+            )
+        elif "performance" in profiles:
+            recommendations.append(
+                "• Balanced is a sensible default. Use Performance only for demanding work when you need it; use Power saver on battery or when quieter operation matters."
+                if english
+                else "• Dengeli profil günlük kullanım için iyi varsayılandır. Performans profilini yalnızca ihtiyaç duyduğun ağır işlerde; Pil tasarrufunu pilde veya sessizlik istediğinde seç."
+            )
         if not recommendations:
             recommendations.append("• No critical memory/disk pressure or missing SSD TRIM setting was detected. Review boot and service diagnostics below." if english else "• Kritik RAM/disk baskısı veya eksik SSD TRIM ayarı görünmüyor. Açılış ve servis ölçümlerini aşağıdan incele.")
         recommendations.append("• System services are never disabled automatically; doing so could affect networking, Bluetooth, power management, or desktop features." if english else "• Sistem servislerini otomatik kapatmıyoruz: ağ, Bluetooth, güç yönetimi veya masaüstü işlevleri etkilenebilir.")
         self.performance_recommendations.setPlainText("\n".join(recommendations))
 
-        self.power_profile_button.setEnabled(report["power_profile"] != "performance" and bool(shutil.which("powerprofilesctl")))
+        available_profiles = set(report.get("available_power_profiles", []))
+        self._active_power_profile = report["power_profile"]
+        self._available_power_profiles = available_profiles
+        self.power_profile_combo.blockSignals(True)
+        self.power_profile_combo.clear()
+        profile_options = (
+            ("Dengeli · günlük kullanım", "balanced"),
+            ("Performans · daha yüksek tepki", "performance"),
+            ("Pil tasarrufu · daha serin ve sessiz", "power-saver"),
+        )
+        for label, profile_id in profile_options:
+            if profile_id in available_profiles:
+                self.power_profile_combo.addItem(label, profile_id)
+        preferred = self.power_profile_combo.findData(report["power_profile"])
+        self.power_profile_combo.setCurrentIndex(max(0, preferred))
+        self.power_profile_combo.blockSignals(False)
+        self.power_profile_combo.setEnabled(bool(available_profiles))
+        self.apply_power_profile_button.setEnabled(
+            bool(available_profiles)
+            and self.power_profile_combo.currentData() in available_profiles
+            and self.power_profile_combo.currentData() != report["power_profile"]
+        )
+        previous_profile = str(self.settings.value("performance/previous_power_profile", ""))
+        self.restore_power_profile_button.setEnabled(
+            bool(previous_profile)
+            and previous_profile in available_profiles
+            and previous_profile != report["power_profile"]
+        )
+        self._power_profile_description_changed()
+        if not available_profiles:
+            self.power_profile_description.setText(
+                i18n.tr("Güç profili denetleyicisi bu sistemde kullanılamıyor; daemon veya donanım desteği olmayabilir.")
+            )
         self.trim_button.setEnabled(
             report["root_is_ssd"]
             and report["trim_supported"]
@@ -1431,19 +1520,108 @@ class MainWindow(QMainWindow):
             _message_box("warning", self, "Bazı öğeler geri yüklenemedi", "\n".join(errors))
         self.refresh_performance()
 
+    def _power_profile_description_changed(self, *_args) -> None:
+        descriptions = {
+            "balanced": "Günlük kullanım için dengeli tepki ve enerji tüketimi. Donanımın varsayılan önerisidir.",
+            "performance": "Daha yüksek işlemci tepkisi sağlayabilir; güç tüketimi, sıcaklık ve fan sesi artabilir. Dizüstünde pilde kullanırken dikkat et.",
+            "power-saver": "Güç tüketimini, sıcaklığı ve fan sesini azaltabilir; yoğun işlerde işlemci tepkisi düşebilir.",
+        }
+        self.power_profile_description.setText(
+            i18n.tr(descriptions.get(str(self.power_profile_combo.currentData()), ""))
+        )
+        self.apply_power_profile_button.setEnabled(
+            bool(self._available_power_profiles)
+            and self.power_profile_combo.currentData() in self._available_power_profiles
+            and self.power_profile_combo.currentData() != self._active_power_profile
+            and not (self.power_profile_worker and self.power_profile_worker.isRunning())
+        )
+
     def set_performance_profile(self) -> None:
+        profile = str(self.power_profile_combo.currentData() or "")
+        if profile not in self._available_power_profiles or profile == self._active_power_profile:
+            return
+        explanations = {
+            "performance": (
+                "May improve responsiveness for demanding workloads, but increases power use, heat, and fan noise. "
+                "Your desktop may request authorization; Temizci does not run sudo."
+                if i18n.get_language() == "en"
+                else "Ağır işlerde tepkiyi artırabilir; güç tüketimini, sıcaklığı ve fan sesini yükseltebilir. "
+                "Masaüstü yetkilendirme isteyebilir; Temizci sudo çalıştırmaz."
+            ),
+            "power-saver": (
+                "May reduce power use, heat, and fan noise; demanding workloads may run slower. "
+                "Your desktop may request authorization; Temizci does not run sudo."
+                if i18n.get_language() == "en"
+                else "Güç tüketimini, sıcaklığı ve fan sesini azaltabilir; yoğun işler yavaşlayabilir. "
+                "Masaüstü yetkilendirme isteyebilir; Temizci sudo çalıştırmaz."
+            ),
+            "balanced": (
+                "Returns the machine to a balanced everyday setting. Your desktop may request authorization; Temizci does not run sudo."
+                if i18n.get_language() == "en"
+                else "Bilgisayarı günlük kullanım için dengeli güç ayarına getirir. Masaüstü yetkilendirme isteyebilir; Temizci sudo çalıştırmaz."
+            ),
+        }
         answer = _message_box(
             "question",
             self,
-            "Performans profili",
-            "This profile may improve CPU responsiveness but can increase fan noise, temperature, and battery use. "
-            "The command will only be opened in a terminal. Continue?" if i18n.get_language() == "en" else "Bu profil işlemci tepkisini artırabilir; fan sesi, sıcaklık ve pil tüketimi de artabilir. "
-            "Sadece terminalde komut açılacak; devam etmek istiyor musun?",
+            "Güç profilini değiştir",
+            explanations.get(profile, ""),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
         if answer == QMessageBox.StandardButton.Yes:
-            self._open_command_terminal("powerprofilesctl set performance")
+            self._start_power_profile_change(profile, restoring=False)
+
+    def restore_power_profile(self) -> None:
+        profile = str(self.settings.value("performance/previous_power_profile", ""))
+        if not profile or profile not in self._available_power_profiles:
+            return
+        answer = _message_box(
+            "question",
+            self,
+            "Önceki güç profiline dön",
+            f"Önceki güç profili ({profile}) geri yüklenecek. Devam edilsin?"
+            if i18n.get_language() == "tr"
+            else f"This will restore the previous power profile ({profile}). Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._start_power_profile_change(profile, restoring=True)
+
+    def _start_power_profile_change(self, profile: str, restoring: bool) -> None:
+        if self.power_profile_worker and self.power_profile_worker.isRunning():
+            return
+        self._restoring_power_profile = restoring
+        self.apply_power_profile_button.setEnabled(False)
+        self.restore_power_profile_button.setEnabled(False)
+        self._show_status("Güç profili uygulanıyor…")
+        worker = PowerProfileWorker(profile)
+        worker.applied.connect(self._power_profile_applied)
+        worker.failed.connect(self._power_profile_failed)
+        worker.finished.connect(self._power_profile_worker_done)
+        self.power_profile_worker = worker
+        worker.start()
+
+    def _power_profile_applied(self, result: dict) -> None:
+        if self._restoring_power_profile:
+            self.settings.remove("performance/previous_power_profile")
+            self._show_status(f"Önceki güç profiline dönüldü: {result['active']}", 7000)
+        else:
+            previous = result.get("previous", "")
+            if previous in self._available_power_profiles and previous != result.get("active"):
+                self.settings.setValue("performance/previous_power_profile", previous)
+            self._show_status(f"Güç profili etkin: {result['active']}", 7000)
+        self.settings.sync()
+
+    def _power_profile_failed(self, message: str) -> None:
+        _message_box("warning", self, "Güç profili değiştirilemedi", message)
+
+    def _power_profile_worker_done(self) -> None:
+        if self.power_profile_worker:
+            self.power_profile_worker.deleteLater()
+            self.power_profile_worker = None
+        self.refresh_performance()
 
     def enable_trim(self) -> None:
         answer = _message_box(
@@ -1975,7 +2153,7 @@ class MainWindow(QMainWindow):
         if not command:
             return
         allowed = {item.command for item in self.items if item.action == "command" and item.command}
-        allowed.update({"powerprofilesctl set performance", "sudo systemctl enable --now fstrim.timer"})
+        allowed.add("sudo systemctl enable --now fstrim.timer")
         if command not in allowed:
             try:
                 tokens = shlex.split(command)
@@ -2006,7 +2184,9 @@ class MainWindow(QMainWindow):
         _message_box("warning", self, "Terminal bulunamadı", "Install foot, alacritty, ghostty, konsole, or xterm." if i18n.get_language() == "en" else "foot, alacritty, ghostty, konsole veya xterm kurulu olmalı.")
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt event API
-        if self.worker and self.worker.isRunning():
+        if (self.worker and self.worker.isRunning()) or (
+            self.power_profile_worker and self.power_profile_worker.isRunning()
+        ):
             _message_box(
                 "information",
                 self,

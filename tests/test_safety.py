@@ -6,6 +6,7 @@ import os
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from temizci_app import core
@@ -332,6 +333,51 @@ class TemizciSafetyTests(unittest.TestCase):
         self.assertEqual(core.select_items(items, "privacy"), {"safe-cache", "safe-browser"})
         self.assertEqual(core.select_items(items, "manual"), set())
 
+    def test_power_profile_parser_and_explicit_profile_change(self) -> None:
+        output = """  performance:
+    Degraded: no
+* balanced:
+    CpuDriver: amd-pstate
+  power-saver:
+    CpuDriver: amd-pstate
+"""
+        self.assertEqual(
+            core.parse_power_profiles(output),
+            ["performance", "balanced", "power-saver"],
+        )
+        with patch("temizci_app.core.shutil.which", return_value="/usr/bin/powerprofilesctl"), patch(
+            "temizci_app.core._run",
+            side_effect=[
+                (0, output, ""),
+                (0, "balanced\n", ""),
+                (0, "", ""),
+                (0, "performance\n", ""),
+            ],
+        ) as run:
+            result = core.set_power_profile("performance")
+        self.assertEqual(result, {"previous": "balanced", "active": "performance"})
+        self.assertEqual(run.call_args_list[2].args[0], ["powerprofilesctl", "set", "performance"])
+
+    def test_power_profile_rejects_unsupported_or_unavailable_profile(self) -> None:
+        with self.assertRaises(ValueError):
+            core.set_power_profile("turbo")
+        with patch("temizci_app.core.shutil.which", return_value="/usr/bin/powerprofilesctl"), patch(
+            "temizci_app.core._run", return_value=(0, "* balanced:\n", "")
+        ):
+            with self.assertRaises(ValueError):
+                core.set_power_profile("performance")
+
+        with patch("temizci_app.core.shutil.which", return_value="/usr/bin/powerprofilesctl"), patch(
+            "temizci_app.core._run",
+            side_effect=[
+                (0, "* balanced:\n  performance:\n", ""),
+                (1, "", "daemon unavailable"),
+            ],
+        ) as run:
+            with self.assertRaises(RuntimeError):
+                core.set_power_profile("performance")
+            self.assertEqual(run.call_count, 2)  # refuse to change without a restorable prior profile
+
     # -- biçimlendirme ---------------------------------------------------
     def test_parse_size(self) -> None:
         self.assertEqual(core.parse_size("1.63 GiB"), int(1.63 * 1024**3))
@@ -405,11 +451,18 @@ Required By     : None
             self.assertEqual(i18n.tr("Kök dizin hariç tutulamaz: /"), "The filesystem root cannot be excluded: /")
             self.assertEqual(i18n.tr("Düşük disk alanı"), "Low disk space")
             self.assertEqual(i18n.tr("Geliştirici"), "Developer")
+            self.assertEqual(i18n.tr("Performans · daha yüksek tepki"), "Performance · higher responsiveness")
+            self.assertEqual(i18n.tr("Güç profili etkin: performance"), "Power profile active: performance")
+            self.assertEqual(
+                i18n.tr("Önceki güç profili (balanced) geri yüklenecek. Devam edilsin?"),
+                "The previous power profile (balanced) will be restored. Continue?",
+            )
             i18n.set_language("tr")
             self.assertEqual(i18n.tr("Apps & packages"), "Uygulamalar ve paketler")
             self.assertEqual(i18n.tr("85% used"), "85% dolu")
             self.assertEqual(i18n.tr("Scan complete · 3 items · 1.2 s"), "Tarama tamamlandı · 3 öğe · 1.2 sn")
             self.assertEqual(i18n.tr("Low disk space"), "Düşük disk alanı")
+            self.assertEqual(i18n.tr("Power profile active: performance"), "Güç profili etkin: performance")
         finally:
             i18n.set_language(original)
 

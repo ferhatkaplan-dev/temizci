@@ -1,4 +1,32 @@
-# Scan performance notes
+# Performance and system tuning
+
+## Improving the computer's performance
+
+The desktop **Performance & startup** page combines read-only diagnostics with
+explicit, reversible actions. The power-profile workflow offers Balanced,
+Performance, or Power saver when `powerprofilesctl list` reports that the
+hardware supports them. Temizci confirms before calling
+`powerprofilesctl set <profile>` and stores the previous profile so it can be
+restored from the same page. It runs as the logged-in user through
+power-profiles-daemon; no sudo command or persistent kernel tweak is issued.
+Depending on system policy, the desktop authorization agent may still request
+permission to switch profiles.
+
+Performance mode can improve responsiveness for CPU-bound work, but can also
+increase power draw, heat, fan noise, and battery drain. Power saver trades peak
+responsiveness for lower energy use. Balanced is the default recommendation;
+the useful choice depends on the device, power source, cooling, and workload.
+No profile guarantees a measurable speedup.
+
+The page also reports RAM/swap usage, boot timing, enabled system units,
+SSD discard support, and user autostart entries. User autostart entries can be
+disabled individually and restored. System services are never disabled by an
+automatic optimizer. SSD TRIM is offered only when support is detected; it is
+periodic storage maintenance, not a CPU-performance setting. Freeing disk space
+can make room for updates and applications but will not fix a CPU or RAM
+bottleneck.
+
+## Scan performance
 
 Temizci scans local filesystems only. No network calls are made while scanning,
 and no cleanup is performed by the scan engine.
