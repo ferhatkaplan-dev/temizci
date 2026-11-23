@@ -204,6 +204,37 @@ class TemizciSafetyTests(unittest.TestCase):
         allowed.mkdir()
         self.assertEqual(core.normalize_excludes([str(allowed)]), (allowed,))
 
+    def test_large_file_discovery_keeps_only_top_candidates(self) -> None:
+        downloads = self.root / "Downloads"
+        downloads.mkdir()
+        for size in (4, 16, 8, 32, 24):
+            (downloads / f"{size}.bin").write_bytes(b"x" * size)
+
+        old_roots = core.LARGE_FILE_ROOTS
+        old_minimum = core.LARGE_FILE_MIN
+        limit_token = core._ACTIVE_LARGE_LIMIT.set(3)
+        try:
+            core.LARGE_FILE_ROOTS = ["Downloads"]
+            core.LARGE_FILE_MIN = 1
+            items = core.collect_large_files({})
+            self.assertEqual([item.size for item in items], [32, 24, 16])
+            self.assertTrue(all(item.path for item in items))
+        finally:
+            core.LARGE_FILE_ROOTS = old_roots
+            core.LARGE_FILE_MIN = old_minimum
+            core._ACTIVE_LARGE_LIMIT.reset(limit_token)
+
+    def test_walk_size_counts_symlinks_without_following_them(self) -> None:
+        root = self.root / ".cache" / "walk"
+        root.mkdir(parents=True)
+        target = self.root / ".hidden" / "target.bin"
+        target.parent.mkdir()
+        target.write_bytes(b"x" * 4096)
+        (root / "link").symlink_to(target)
+        size, files, _newest = core.walk_size(root)
+        self.assertEqual(files, 1)
+        self.assertLess(size, target.stat().st_size)
+
     def test_scan_options_filter_categories_exclusions_and_fast_mode(self) -> None:
         keep = self.root / ".cache" / "keep"
         blocked = self.root / ".cache" / "blocked"

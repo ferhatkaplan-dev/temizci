@@ -34,6 +34,13 @@ slow or network-backed storage may benefit from `workers=1`.
   `Path`/`lstat` calls.
 - Large-file discovery prunes hidden directories, known project/build
   directories, backup markers, and user-excluded paths.
+- Large-file discovery retains only the top N candidates in a min-heap instead
+  of storing and sorting every matching file. The traversal remains complete,
+  but auxiliary memory is bounded by the result limit and selection work is
+  `O(n log N)` rather than sorting all `n` candidates.
+- `walk_size` checks `DirEntry.is_dir(follow_symlinks=False)` before requesting
+  file metadata, avoiding a metadata call for directory entries on filesystems
+  that report entry types directly.
 - Collectors share an in-memory size cache during a scan. Concurrent collectors
   can still repeat work if they reach the same uncached path at the same time.
 - Partial results are emitted after each collector completes, so the UI can show
@@ -50,6 +57,11 @@ time temizci scan --mode balanced --stats --json > /tmp/scan.json
 `--stats` reports total elapsed time and per-collector durations on `stderr`.
 Use the same mode and category set when comparing runs. The first run after a
 reboot is usually slower because the operating system's file cache is cold.
+
+In a synthetic local test with 12,000 qualifying files, top-40 discovery took
+about 0.06 s versus 0.28 s for collecting and sorting all candidates. This is a
+microbenchmark, not a promised whole-scan speedup; actual results depend on
+storage, filesystem, and directory contents.
 
 ## Correctness over speed
 

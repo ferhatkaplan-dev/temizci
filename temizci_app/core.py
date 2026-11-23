@@ -26,11 +26,12 @@ import urllib.parse
 import configparser
 import platform
 import datetime
+import heapq
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 HOME = Path(os.environ.get("HOME") or str(Path.home())).resolve()
 TRASH_DIR = HOME / ".local" / "share" / "Trash"
@@ -412,16 +413,16 @@ def walk_size(path: Path, cache: dict[str, tuple[int, int, float]] | None = None
             with os.scandir(current) as it:
                 for entry in it:
                     try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                            continue
                         est = entry.stat(follow_symlinks=False)
                     except OSError:
                         continue
-                    if stat.S_ISDIR(est.st_mode):
-                        stack.append(Path(entry.path))
-                    else:
-                        total += getattr(est, "st_blocks", 0) * 512 or est.st_size
-                        files += 1
-                        if newest is None or est.st_mtime > newest:
-                            newest = est.st_mtime
+                    total += getattr(est, "st_blocks", 0) * 512 or est.st_size
+                    files += 1
+                    if newest is None or est.st_mtime > newest:
+                        newest = est.st_mtime
         except OSError:
             continue
     result = (total, files, newest)
@@ -1357,8 +1358,20 @@ PRUNE_DIRS = {"node_modules", ".git", ".cache", ".venv", "venv", "__pycache__", 
 
 
 def collect_large_files(cache: dict) -> list[Item]:
-    found: list[tuple[int, Path, float]] = []
+    # Keep only the largest N candidates while walking, instead of retaining
+    # and sorting every qualifying file (which can be a large list in Downloads).
     limit = max(1, int(_ACTIVE_LARGE_LIMIT.get()))
+    found: list[tuple[int, int, str, float]] = []
+    sequence = 0
+
+    def offer(size: int, path: str, mtime: float) -> None:
+        nonlocal sequence
+        sequence += 1
+        candidate = (size, sequence, path, mtime)
+        if len(found) < limit:
+            heapq.heappush(found, candidate)
+        else:
+            heapq.heappushpop(found, candidate)
 
     def visit(root: Path) -> None:
         # os.scandir tabanlı yineleme: her dosya için ayrı Path/lstat yerine
@@ -1388,7 +1401,7 @@ def collect_large_files(cache: dict) -> list[Item]:
                         except OSError:
                             continue
                         if est.st_size >= LARGE_FILE_MIN:
-                            found.append((est.st_size, Path(entry.path), est.st_mtime))
+                            offer(est.st_size, entry.path, est.st_mtime)
             except OSError:
                 continue
 
@@ -1407,13 +1420,14 @@ def collect_large_files(cache: dict) -> list[Item]:
                     except OSError:
                         continue
                     if est.st_size >= LARGE_FILE_MIN:
-                        found.append((est.st_size, Path(entry.path), est.st_mtime))
+                        offer(est.st_size, entry.path, est.st_mtime)
         except OSError:
             pass
 
-    found.sort(key=lambda x: x[0], reverse=True)
+    found.sort(key=lambda x: (x[0], x[1]), reverse=True)
     items: list[Item] = []
-    for size, path, mtime in found[:limit]:
+    for size, _sequence, raw_path, mtime in found:
+        path = Path(raw_path)
         items.append(
             _make_item(
                 "large-file",
